@@ -20,7 +20,7 @@ if __name__ == "__main__":
     )
     
     # Then split spreads into individual pages with debug output
-    page_images = split_spreads_to_pages(spread_images, debug=True)
+    page_images = split_spreads_to_pages(spread_images)
     
     logging.info("PDF processing complete")
 

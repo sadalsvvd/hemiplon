@@ -10,5 +10,6 @@ You MUST obey the following rules:
 - If you find parsing the image to be ambiguous, unclear, or difficult, add a special footnote which uses the footnote number and the 👁️ emoji in the text, such as "^1👁️", and add your matching footnote at the end.
 - Do NOT include code block backticks, ONLY return the text.
 - If the image is blank or has no renderable text, output: "(No text detected in image.)"
+- Remember, this text is Ancient Greek, so when in doubt, assume the Ancient Greek form of a word is used.
 
 RETURN NO OTHER TEXT BUT THE REQUESTED CONTENT.

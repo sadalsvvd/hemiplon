@@ -6,7 +6,10 @@ import logging
 from openai import OpenAI
 from pathlib import Path
 import time
-from typing import List
+from typing import List, Dict
+import argparse
+import difflib
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -40,7 +43,8 @@ async def process_image(
     image_path: str,
     ocr_prompt: str,
     semaphore: asyncio.Semaphore,
-    outpath_postfix: str = ""
+    outpath_postfix: str = "",
+    model: str = "gpt-4.1"
 ):
     async with semaphore:  # This ensures we only have max_concurrent requests at once
         start_time = time.time()
@@ -52,7 +56,7 @@ async def process_image(
             logger.info(f"Image {image_name} encoded to base64. Length: {len(base64_image)}")
             
             ocr_completion = client.chat.completions.create(
-                model="gpt-4.1",
+                model=model,
                 messages=[
                     {
                         "role": "user",
@@ -92,7 +96,8 @@ async def process_directory(
     max_concurrent: int = 3,
     start_index: int = 0,
     end_index: int | None = None,
-    outpath_postfix: str = ""
+    outpath_postfix: str = "",
+    model: str = "gpt-4.1"
 ):
     client = OpenAI(api_key=api_key)
     
@@ -116,7 +121,7 @@ async def process_directory(
     
     # Create tasks for all images
     tasks = [
-        process_image(client, str(img), ocr_prompt_contents, semaphore, outpath_postfix)
+        process_image(client, str(img), ocr_prompt_contents, semaphore, outpath_postfix, model)
         for img in image_files
     ]
     
@@ -125,18 +130,24 @@ async def process_directory(
 
 # Example usage
 if __name__ == "__main__":
-    directory_path = "images/pages"  # Directory containing images
-    ocr_prompt_path = "prompts/transcribe.md"  # Path to OCR prompt
-    start_index = 0  # Start processing from this index
-    end_index = 10  # Process up to this index (exclusive)
-    max_concurrent = 3  # Maximum number of concurrent requests
-    outpath_postfix = "_gpt-4.1_high-detail"  # Optional postfix for output directory
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Process images and generate transcriptions')
+    parser.add_argument('--directory', type=str, default="images/pages", help='Directory containing images')
+    parser.add_argument('--prompt', type=str, default="prompts/transcribe.md", help='Path to OCR prompt')
+    parser.add_argument('--start', type=int, default=0, help='Start processing from this index')
+    parser.add_argument('--end', type=int, default=10, help='Process up to this index (exclusive)')
+    parser.add_argument('--concurrent', type=int, default=3, help='Maximum number of concurrent requests')
+    parser.add_argument('--postfix', type=str, default="_gpt-4.1_high-detail", help='Optional postfix for output directory')
+    parser.add_argument('--model', type=str, default="gpt-4.1", help='OpenAI model to use for transcription')
+    
+    args = parser.parse_args()
     
     asyncio.run(process_directory(
-        directory_path,
-        ocr_prompt_path,
-        max_concurrent=max_concurrent,
-        start_index=start_index,
-        end_index=end_index,
-        outpath_postfix=outpath_postfix
+        args.directory,
+        args.prompt,
+        max_concurrent=args.concurrent,
+        start_index=args.start,
+        end_index=args.end,
+        outpath_postfix=args.postfix,
+        model=args.model
     ))

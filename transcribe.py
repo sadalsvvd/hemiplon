@@ -23,9 +23,9 @@ def encode_image(image_path):
         return base64.b64encode(image_file.read()).decode("utf-8")
 
 # Function to write transcription to a markdown file
-def write_transcription(image_name: str, transcription: str):
-    # Create output directory if it doesn't exist
-    output_dir = Path("output/transcribed")
+def write_transcription(image_name: str, transcription: str, outpath_postfix: str = ""):
+    # Create output directory with postfix if provided
+    output_dir = Path("output") / f"transcribed{outpath_postfix}"
     output_dir.mkdir(parents=True, exist_ok=True)
     
     # Write to output directory
@@ -39,7 +39,8 @@ async def process_image(
     client: OpenAI,
     image_path: str,
     ocr_prompt: str,
-    semaphore: asyncio.Semaphore
+    semaphore: asyncio.Semaphore,
+    outpath_postfix: str = ""
 ):
     async with semaphore:  # This ensures we only have max_concurrent requests at once
         start_time = time.time()
@@ -51,7 +52,7 @@ async def process_image(
             logger.info(f"Image {image_name} encoded to base64. Length: {len(base64_image)}")
             
             ocr_completion = client.chat.completions.create(
-                model="gpt-4.1",
+                model="gpt-o4-mini-high",
                 messages=[
                     {
                         "role": "user",
@@ -61,12 +62,13 @@ async def process_image(
                                 "type": "image_url",
                                 "image_url": {
                                     "url": f"data:image/png;base64,{base64_image}",
+                                    "detail": "high",
                                 },
                             },
                         ],
                     }
                 ],
-                max_tokens=1024,
+                max_tokens=24000,
             )
             
             transcription = ocr_completion.choices[0].message.content
@@ -76,7 +78,7 @@ async def process_image(
             assert transcription is not None, f"Transcription is None for {image_name}"
             
             # Write transcription immediately
-            write_transcription(image_name, transcription)
+            write_transcription(image_name, transcription, outpath_postfix)
             return transcription
             
         except Exception as e:
@@ -89,7 +91,8 @@ async def process_directory(
     ocr_prompt_path: str,
     max_concurrent: int = 3,
     start_index: int = 0,
-    end_index: int | None = None
+    end_index: int | None = None,
+    outpath_postfix: str = ""
 ):
     client = OpenAI(api_key=api_key)
     
@@ -113,7 +116,7 @@ async def process_directory(
     
     # Create tasks for all images
     tasks = [
-        process_image(client, str(img), ocr_prompt_contents, semaphore)
+        process_image(client, str(img), ocr_prompt_contents, semaphore, outpath_postfix)
         for img in image_files
     ]
     
@@ -125,15 +128,17 @@ if __name__ == "__main__":
     directory_path = "images"  # Directory containing images
     ocr_prompt_path = "prompts/transcribe.md"  # Path to OCR prompt
     start_index = 0  # Start processing from this index
-    end_index = 10  # Process up to this index (exclusive)
+    end_index = 15  # Process up to this index (exclusive)
     max_concurrent = 3  # Maximum number of concurrent requests
+    outpath_postfix = "_o4-mini_high-detail"  # Optional postfix for output directory
     
     asyncio.run(process_directory(
         directory_path,
         ocr_prompt_path,
         max_concurrent=max_concurrent,
         start_index=start_index,
-        end_index=end_index
+        end_index=end_index,
+        outpath_postfix=outpath_postfix
     ))
 # # Translation step using text model
 # translation_prompt = f"Translate the following Latin text to English:\n\n{ocr_text}"

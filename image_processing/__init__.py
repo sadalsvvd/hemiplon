@@ -4,6 +4,7 @@ from PIL import Image
 import pdf2image
 import logging
 from .splitter import split_two_page
+from .cleaning import clean_small_artifacts
 import cv2
 
 # Setup basic configuration for logging
@@ -63,7 +64,7 @@ def convert_pdf_pages_to_images(pdf_path, page_range=None):
     return converted_images
 
 
-def split_spreads_to_pages(spread_images, debug=False):
+def split_spreads_to_pages(spread_images, debug=False, clean_artifacts=True):
     """
     Split spread images into individual left and right pages.
     Saves pages to 'images/pages' directory with sequential numbering.
@@ -72,6 +73,7 @@ def split_spreads_to_pages(spread_images, debug=False):
     Args:
         spread_images: List of paths to spread images
         debug: If True, enables debug image output for the splitting process
+        clean_artifacts: If True, removes small dots and artifacts from the images
     """
     pages_dir = os.path.join("images", "pages")
     if not os.path.exists(pages_dir):
@@ -92,12 +94,26 @@ def split_spreads_to_pages(spread_images, debug=False):
         
         # Save left page
         left_path = os.path.join(pages_dir, f"{prefix}_page_{left_page_num:04d}.jpg")
+        if debug and clean_artifacts:
+            # Save original version with _original suffix
+            left_orig_path = os.path.join(pages_dir, f"{prefix}_page_{left_page_num:04d}_original.jpg")
+            cv2.imwrite(left_orig_path, left_page)
         cv2.imwrite(left_path, left_page)
+        if clean_artifacts:
+            cleaned = clean_small_artifacts(left_path, debug=debug)
+            cv2.imwrite(left_path, cleaned)
         page_images.append(left_path)
         
         # Save right page
         right_path = os.path.join(pages_dir, f"{prefix}_page_{right_page_num:04d}.jpg")
+        if debug and clean_artifacts:
+            # Save original version with _original suffix
+            right_orig_path = os.path.join(pages_dir, f"{prefix}_page_{right_page_num:04d}_original.jpg")
+            cv2.imwrite(right_orig_path, right_page)
         cv2.imwrite(right_path, right_page)
+        if clean_artifacts:
+            cleaned = clean_small_artifacts(right_path, debug=debug)
+            cv2.imwrite(right_path, cleaned)
         page_images.append(right_path)
 
     logging.info(f"Split {len(spread_images)} spreads into {len(page_images)} individual pages")

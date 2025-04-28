@@ -52,7 +52,7 @@ async def process_image(
             logger.info(f"Image {image_name} encoded to base64. Length: {len(base64_image)}")
             
             ocr_completion = client.chat.completions.create(
-                model="gpt-o4-mini-high",
+                model="gpt-4.1",
                 messages=[
                     {
                         "role": "user",
@@ -125,12 +125,12 @@ async def process_directory(
 
 # Example usage
 if __name__ == "__main__":
-    directory_path = "images"  # Directory containing images
+    directory_path = "images/pages"  # Directory containing images
     ocr_prompt_path = "prompts/transcribe.md"  # Path to OCR prompt
     start_index = 0  # Start processing from this index
-    end_index = 15  # Process up to this index (exclusive)
+    end_index = 10  # Process up to this index (exclusive)
     max_concurrent = 3  # Maximum number of concurrent requests
-    outpath_postfix = "_o4-mini_high-detail"  # Optional postfix for output directory
+    outpath_postfix = "_gpt-4.1_high-detail"  # Optional postfix for output directory
     
     asyncio.run(process_directory(
         directory_path,
@@ -140,19 +140,3 @@ if __name__ == "__main__":
         end_index=end_index,
         outpath_postfix=outpath_postfix
     ))
-# # Translation step using text model
-# translation_prompt = f"Translate the following Latin text to English:\n\n{ocr_text}"
-# translation_completion = client.chat.completions.create(
-#     model="gpt-4.1-mini",
-#     messages=[
-#         {
-#             "role": "user",
-#             "content": [
-#                 { "type": "text", "text": translation_prompt }
-#             ],
-#         }
-#     ],
-#     max_tokens=1024,
-# )
-
-# translated_text = translation_completion.choices[0].message.content

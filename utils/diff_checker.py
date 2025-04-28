@@ -1,8 +1,9 @@
 import os
 import difflib
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Set
 import logging
 import re
+from collections import defaultdict
 
 def normalize_whitespace(text: str) -> str:
     """
@@ -133,16 +134,116 @@ def normalize_for_diff(text: str) -> str:
     text = re.sub(r'\n\s*\n', '\n\n', text)
     return text.strip()
 
+def find_word_differences(text1: str, text2: str) -> List[Tuple[str, str]]:
+    """Find word-level differences between two texts."""
+    words1 = text1.split()
+    words2 = text2.split()
+    
+    matcher = difflib.SequenceMatcher(None, words1, words2)
+    differences = []
+    
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag != 'equal':
+            diff1 = ' '.join(words1[i1:i2]) if i1 < i2 else None
+            diff2 = ' '.join(words2[j1:j2]) if j1 < j2 else None
+            if diff1 or diff2:
+                differences.append((diff1, diff2))
+    
+    return differences
+
+def find_greek_variations(texts: List[str]) -> List[Tuple[str, str, str]]:
+    """Find variations in Greek text between versions."""
+    # Basic Greek unicode range pattern
+    greek_pattern = re.compile(r'[\u0370-\u03FF\u1F00-\u1FFF]+')
+    
+    variations = []
+    for i, text1 in enumerate(texts):
+        for j in range(i + 1, len(texts)):
+            text2 = texts[j]
+            # Find all Greek text in both versions
+            greek1 = greek_pattern.finditer(text1)
+            greek2 = greek_pattern.finditer(text2)
+            
+            # Compare corresponding Greek segments
+            for g1, g2 in zip(greek1, greek2):
+                if g1.group() != g2.group():
+                    variations.append((g1.group(), g2.group(), f"Version {i} vs {j}"))
+    
+    return variations
+
+def categorize_differences(texts: List[str], labels: List[str]) -> Dict[str, List[str]]:
+    """Categorize differences between versions."""
+    categories = defaultdict(list)
+    
+    # Compare each pair of texts
+    for i in range(len(texts)):
+        for j in range(i + 1, len(texts)):
+            # Find word-level differences
+            diffs = find_word_differences(texts[i], texts[j])
+            for diff1, diff2 in diffs:
+                if diff1 and diff2:  # Substitution
+                    categories['word_substitutions'].append(
+                        f"- {labels[i]}: {diff1}")
+                    categories['word_substitutions'].append(
+                        f"+ {labels[j]}: {diff2}")
+                elif diff1:  # Deletion (only in first version)
+                    categories['deletions'].append(
+                        f"- Only in {labels[i]}: {diff1}")
+                elif diff2:  # Addition (only in second version)
+                    categories['additions'].append(
+                        f"+ Only in {labels[j]}: {diff2}")
+    
+    # Remove duplicates while preserving order
+    for category in categories:
+        seen = set()
+        categories[category] = [x for x in categories[category] 
+                              if not (x in seen or seen.add(x))]
+    
+    return dict(categories)
+
+def wrap_text_with_markers(text: str, markers: List[Tuple[int, int, str]], width: int = 78) -> List[Tuple[str, str]]:
+    """
+    Wrap text to specified width while maintaining marker positions.
+    Returns list of (text_line, marker_line) tuples.
+    """
+    lines = []
+    current_pos = 0
+    
+    while current_pos < len(text):
+        # Find the next line break point
+        line_end = min(current_pos + width, len(text))
+        if line_end < len(text):
+            # Try to break at a word boundary
+            while line_end > current_pos and text[line_end] != ' ':
+                line_end -= 1
+            if line_end == current_pos:  # No space found, force break
+                line_end = min(current_pos + width, len(text))
+        
+        # Extract this line
+        line_text = text[current_pos:line_end].rstrip()
+        
+        # Create marker line for this segment
+        marker_line = [' '] * len(line_text)
+        for start, end, marker in markers:
+            if start >= current_pos and start < line_end:
+                # Marker starts in this line
+                marker_start = start - current_pos
+                marker_end = min(end - current_pos, len(line_text))
+                for i in range(marker_start, marker_end):
+                    marker_line[i] = marker
+        
+        lines.append((line_text, ''.join(marker_line)))
+        
+        # Move to next line
+        current_pos = line_end
+        while current_pos < len(text) and text[current_pos] == ' ':
+            current_pos += 1
+    
+    return lines
+
 def generate_multi_way_diff(texts: List[str], labels: List[str]) -> str:
     """
     Generate a multi-way diff optimized for LLM analysis.
-    
-    Args:
-        texts: List of text versions to compare
-        labels: List of labels for each version (e.g. ['gpt-4.1', 'gpt-4.1-mini', 'claude'])
-    
-    Returns:
-        A formatted string showing differences between versions
     """
     if len(texts) != len(labels):
         raise ValueError("Number of texts must match number of labels")
@@ -153,19 +254,23 @@ def generate_multi_way_diff(texts: List[str], labels: List[str]) -> str:
     # Split into paragraphs for semantic comparison
     paragraphs = []
     for text in normalized_texts:
-        # Split on double newlines, preserving empty paragraphs
         paras = [p.strip() for p in text.split('\n\n')]
         paragraphs.append(paras)
     
-    # Find the maximum number of paragraphs
-    max_paras = max(len(p) for p in paragraphs)
-    
     # Build the diff output
     output = []
-    output.append("=== MULTI-WAY DIFF ANALYSIS ===\n")
     
-    for para_idx in range(max_paras):
-        output.append(f"\n--- Paragraph {para_idx + 1} ---")
+    # Find Greek variations
+    greek_vars = find_greek_variations(normalized_texts)
+    if greek_vars:
+        output.append("\n[GREEK TEXT VARIATIONS]")
+        for old, new, version in greek_vars:
+            output.append(f"{version}:")
+            output.append(f"- {old} → {new}")
+    
+    # Process each paragraph
+    for para_idx in range(max(len(p) for p in paragraphs)):
+        output.append(f"\n=== Paragraph {para_idx + 1} ===")
         
         # Get this paragraph from each version
         current_paras = []
@@ -175,35 +280,90 @@ def generate_multi_way_diff(texts: List[str], labels: List[str]) -> str:
             else:
                 current_paras.append((labels[i], ""))
         
-        # If all versions have the same paragraph, just show it once
-        if len(set(p[1] for p in current_paras)) == 1:
-            output.append(f"\n[ALL VERSIONS AGREE]:")
-            output.append(current_paras[0][1])
+        # If all versions agree
+        if len(set(p[1] for p in current_paras)) == 1 and current_paras[0][1]:
+            output.append("[CONSENSUS]")
+            # Wrap consensus text
+            wrapped = wrap_text_with_markers(current_paras[0][1], [], width=78)
+            for text_line, _ in wrapped:
+                output.append(text_line)
             continue
         
-        # Otherwise show differences
-        output.append("\n[DIFFERENCES FOUND]:")
+        # If there are differences, show full paragraphs with markers
+        output.append("[DIFFERENCES]")
+        
+        # Initialize variables
+        para_texts = [p[1] for p in current_paras if p[1]]
+        para_labels = [p[0] for p in current_paras if p[1]]
+        categories = {}
+        diff_map = defaultdict(list)
+        
+        # Get word-level differences
+        if para_texts:
+            categories = categorize_differences(para_texts, para_labels)
+            
+            # Create a map of differences for marking
+            for diff in categories.get('word_substitutions', []):
+                if diff.startswith('-'):
+                    label, text = diff[2:].split(': ', 1)
+                    diff_map[label].append(('sub', text))
+                elif diff.startswith('+'):
+                    label, text = diff[2:].split(': ', 1)
+                    diff_map[label].append(('add', text))
+            
+            for diff in categories.get('additions', []):
+                if diff.startswith('+'):
+                    label, text = diff[2:].split(': ', 1)
+                    diff_map[label].append(('add', text))
+            
+            for diff in categories.get('deletions', []):
+                if diff.startswith('-'):
+                    label, text = diff[2:].split(': ', 1)
+                    diff_map[label].append(('del', text))
+        
+        # Show each version's paragraph with markers below
         for label, para in current_paras:
             if para:  # Only show non-empty paragraphs
                 output.append(f"\n{label}:")
-                output.append(para)
-    
-    # Add a summary of differences
-    output.append("\n=== DIFFERENCE SUMMARY ===")
-    for i in range(len(texts)):
-        for j in range(i + 1, len(texts)):
-            if normalized_texts[i] != normalized_texts[j]:
-                output.append(f"\n{labels[i]} vs {labels[j]}:")
-                # Use difflib for line-by-line comparison
-                differ = difflib.Differ()
-                diff = list(differ.compare(
-                    normalized_texts[i].split('\n'),
-                    normalized_texts[j].split('\n')
-                ))
-                # Only show lines with differences
-                diff_lines = [line for line in diff if line.startswith(('+', '-', '?'))]
-                if diff_lines:
-                    output.extend(diff_lines)
+                
+                if label in diff_map:
+                    # Create marker positions
+                    markers = []
+                    for diff_type, text in sorted(diff_map[label], key=lambda x: len(x[1]), reverse=True):
+                        start = para.find(text)
+                        if start != -1:
+                            if diff_type == 'sub':
+                                marker = '^'
+                            elif diff_type == 'add':
+                                marker = '+'
+                            else:  # del
+                                marker = '-'
+                            markers.append((start, start + len(text), marker))
+                    
+                    # Wrap text with markers
+                    wrapped = wrap_text_with_markers(para, markers, width=78)
+                    for text_line, marker_line in wrapped:
+                        output.append(text_line)
+                        output.append(marker_line)
+                else:
+                    # Just wrap text without markers
+                    wrapped = wrap_text_with_markers(para, [], width=78)
+                    for text_line, _ in wrapped:
+                        output.append(text_line)
+        
+        # Also show categorized differences
+        if para_texts and categories:
+            if categories.get('word_substitutions'):
+                output.append("\nWord/Phrase Substitutions:")
+                output.extend(categories['word_substitutions'])
+            
+            if categories.get('additions'):
+                output.append("\nAdditions:")
+                output.extend(categories['additions'])
+            
+            if categories.get('deletions'):
+                output.append("\nDeletions:")
+                output.extend(categories['deletions'])
     
     return '\n'.join(output)
 

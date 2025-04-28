@@ -3,6 +3,8 @@ import PyPDF2
 from PIL import Image
 import pdf2image
 import logging
+from .splitter import split_two_page
+import cv2
 
 # Setup basic configuration for logging
 logging.basicConfig(
@@ -23,7 +25,7 @@ def read_pdf(file_path):
 
 def convert_pdf_pages_to_images(pdf_path, page_range=None):
     """
-    Convert PDF pages to images and save them in the 'images' folder, with an optional range of pages.
+    Convert PDF pages to images and save them in the 'images/spreads' folder, with an optional range of pages.
     The output image files will be prefixed with the PDF filename (sans .pdf).
     """
     logging.info(
@@ -45,18 +47,61 @@ def convert_pdf_pages_to_images(pdf_path, page_range=None):
         pages = pdf2image.convert_from_path(pdf_path)
         page_offset = 1
 
-    if not os.path.exists("images"):
-        os.makedirs("images")
+    # Create spreads directory if it doesn't exist
+    spreads_dir = os.path.join("images", "spreads")
+    if not os.path.exists(spreads_dir):
+        os.makedirs(spreads_dir)
 
     converted_images = []
     for idx, img in enumerate(pages):
         page_num = idx + page_offset
-        out_path = f"images/{pdf_filename}_page_{page_num:04d}.jpg"
+        out_path = os.path.join(spreads_dir, f"{pdf_filename}_spread_{page_num:04d}.jpg")
         img.save(out_path, "JPEG")
         converted_images.append(out_path)
 
-    logging.info(f"Converted {len(converted_images)} pages to images")
+    logging.info(f"Converted {len(converted_images)} pages to spread images")
     return converted_images
+
+
+def split_spreads_to_pages(spread_images, debug=False):
+    """
+    Split spread images into individual left and right pages.
+    Saves pages to 'images/pages' directory with sequential numbering.
+    Returns list of paths to the generated page images.
+    
+    Args:
+        spread_images: List of paths to spread images
+        debug: If True, enables debug image output for the splitting process
+    """
+    pages_dir = os.path.join("images", "pages")
+    if not os.path.exists(pages_dir):
+        os.makedirs(pages_dir)
+
+    page_images = []
+    for spread_idx, spread_path in enumerate(spread_images):
+        # Extract the prefix from the spread filename (everything before _spread_)
+        spread_filename = os.path.basename(spread_path)
+        prefix = spread_filename.split("_spread_")[0]
+        
+        # Split the spread into left and right pages
+        left_page, right_page = split_two_page(spread_path, debug=debug)
+        
+        # Calculate the page numbers (0,1 for first spread, 2,3 for second, etc)
+        left_page_num = spread_idx * 2
+        right_page_num = left_page_num + 1
+        
+        # Save left page
+        left_path = os.path.join(pages_dir, f"{prefix}_page_{left_page_num:04d}.jpg")
+        cv2.imwrite(left_path, left_page)
+        page_images.append(left_path)
+        
+        # Save right page
+        right_path = os.path.join(pages_dir, f"{prefix}_page_{right_page_num:04d}.jpg")
+        cv2.imwrite(right_path, right_page)
+        page_images.append(right_path)
+
+    logging.info(f"Split {len(spread_images)} spreads into {len(page_images)} individual pages")
+    return page_images
 
 
 def export_images_to_pdf(image_files, output_pdf_path):

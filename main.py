@@ -1,5 +1,5 @@
 import logging
-from image_processing import read_pdf, convert_pdf_pages_to_images
+from image_processing import read_pdf, convert_pdf_pages_to_images, split_spreads_to_pages
 
 # Setup basic configuration for logging
 logging.basicConfig(
@@ -12,8 +12,15 @@ INPUT_PDF = "CCAG01.pdf"
 if __name__ == "__main__":
     logging.info("Starting PDF processing")
     pdf_reader = read_pdf(INPUT_PDF)
-    images = convert_pdf_pages_to_images(
+    
+    # First convert PDF to spread images
+    spread_images = convert_pdf_pages_to_images(
         INPUT_PDF,
         page_range=(1, len(pdf_reader.pages))
     )
+    
+    # Then split spreads into individual pages with debug output
+    page_images = split_spreads_to_pages(spread_images, debug=True)
+    
+    logging.info("PDF processing complete")
 

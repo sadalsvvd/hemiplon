@@ -312,16 +312,30 @@ class ProjectManager:
             return
         reviewed_dir = self.project.translation_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
-        tasks = []
-        for diff_file in sorted(diffs_dir.glob("*_diff.md")):
+        input_files = sorted(diffs_dir.glob("*_diff.md"))
+        to_process = log_and_filter_unprocessed(
+            input_files=input_files,
+            output_dir=reviewed_dir,
+            output_suffix="_reviewed.md",
+            stage_name="Translation Review",
+            logger=logger
+        )
+        if not to_process:
+            return
+        async def review_task(diff_file):
             diffs_content = FileManager.read_text(diff_file)
             review_prompt = self.llm_service.render_prompt(
                 str(self.project.get_prompt_path("translation_review")),
                 {"diff_content": diffs_content}
             )
             for config in self.project.translation:
-                tasks.append(self._review_translation_task(diff_file, config, review_prompt, reviewed_dir))
-        await asyncio.gather(*tasks)
+                await self._review_translation_task(diff_file, config, review_prompt, reviewed_dir)
+        await run_tasks_for_files(
+            to_process,
+            review_task,
+            logger=logger,
+            stage_name="Translation Review"
+        )
 
     async def _review_translation_task(self, diff_file, config, review_prompt, reviewed_dir):
         async with self.llm_service.semaphore:
@@ -350,10 +364,24 @@ class ProjectManager:
         translation_dirs = self._get_translation_dirs(as_str=False)
         final_dir = self.project.translation_final_dir
         FileManager.ensure_dir(final_dir)
-        tasks = []
-        for review_file in sorted(reviewed_dir.glob("*_reviewed.md")):
-            tasks.append(self._finalize_translation_task(review_file, translation_dirs, final_dir))
-        await asyncio.gather(*tasks)
+        input_files = sorted(reviewed_dir.glob("*_reviewed.md"))
+        to_process = log_and_filter_unprocessed(
+            input_files=input_files,
+            output_dir=final_dir,
+            output_suffix="_final.md",
+            stage_name="Translation Finalization",
+            logger=logger
+        )
+        if not to_process:
+            return
+        async def finalize_task(review_file):
+            await self._finalize_translation_task(review_file, translation_dirs, final_dir)
+        await run_tasks_for_files(
+            to_process,
+            finalize_task,
+            logger=logger,
+            stage_name="Translation Finalization"
+        )
 
     async def _finalize_translation_task(self, review_file, translation_dirs, final_dir):
         page_id = review_file.name.replace("_reviewed.md", "")

@@ -114,8 +114,7 @@ class ProjectManager:
             return
         reviewed_dir = self.project.transcription_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
-        with open(self.project.review_prompt_path, "r") as f:
-            review_prompt = f.read()
+        review_prompt = FileManager.read_text(self.project.get_prompt_path("transcription_review"))
         tasks = []
         for diff_file in sorted(diffs_dir.glob("*_diff.md")):
             diffs_content = FileManager.read_text(diff_file)
@@ -175,7 +174,7 @@ class ProjectManager:
         else:
             originals_block = "".join([f"## {label}\n{text}\n\n" for label, text in originals.items()])
             prompt = self.llm_service.render_prompt(
-                "prompts/finalize_transcription.j2",
+                str(self.project.get_prompt_path("finalize_transcription")),
                 {"originals_block": originals_block, "review_summary": review_text}
             )
             config = self.project.transcription_review[0]
@@ -221,7 +220,7 @@ class ProjectManager:
             prev_file = page_id_to_file[prev_page_id]
             previous_source_text = FileManager.read_text(prev_file)
         prompt = self.llm_service.render_prompt(
-            "prompts/translate.j2",
+            str(self.project.get_prompt_path("translate")),
             {"source_text": final_text, "previous_source_text": previous_source_text}
         )
         try:
@@ -288,7 +287,7 @@ class ProjectManager:
         for diff_file in sorted(diffs_dir.glob("*_diff.md")):
             diffs_content = FileManager.read_text(diff_file)
             review_prompt = self.llm_service.render_prompt(
-                "prompts/translation_review.j2",
+                str(self.project.get_prompt_path("translation_review")),
                 {"diff_content": diffs_content}
             )
             for config in self.project.translation:
@@ -351,7 +350,7 @@ class ProjectManager:
         else:
             originals_block = "".join([f"## {label}\n{text}\n\n" for label, text in originals.items()])
             prompt = self.llm_service.render_prompt(
-                "prompts/finalize_translation.j2",
+                str(self.project.get_prompt_path("finalize_translation")),
                 {"originals_block": originals_block, "review_summary": review_text}
             )
             config = self.project.translation[0]

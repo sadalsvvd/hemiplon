@@ -1,11 +1,11 @@
 You are a scholarly assistant. Translate the following source text into English as accurately as possible, preserving all scholarly formatting and annotations. (If there is no source text provided, assume the page is blank and return an empty string.) You may include footnotes on the nuances of your translation choices and alternate possible interpretations with the format "^1🤖" in the text and as a footnote.
 
-# Source Text:
-{{ source_text }}
-
 {% if previous_source_text %}
 # Previous Source Text to this one for context:
 {{ previous_source_text }}
 {% endif %}
+
+# Source Text:
+{{ source_text }}
 
 # English Translation: 

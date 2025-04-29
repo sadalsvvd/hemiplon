@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import List, Optional, Dict
 from pathlib import Path
 import yaml
 
@@ -27,7 +27,8 @@ class Project:
     transcription: List[TranscriptionConfig] = field(default_factory=list)
     translation: List[TranslationConfig] = field(default_factory=list)
     transcription_review: List[TranscriptionReviewConfig] = field(default_factory=list)
-    review_prompt_path: str = "prompts/review.md"
+    prompts: Dict[str, str] = field(default_factory=dict)
+    prompts_dir: Path = Path("lib/prompts")
     
     @property
     def project_dir(self) -> Path:
@@ -112,7 +113,7 @@ class Project:
                     {"model": r.model}
                     for r in self.transcription_review
                 ],
-                "review_prompt_path": self.review_prompt_path
+                "prompts": self.prompts
             }
         }
         
@@ -146,7 +147,7 @@ class Project:
             transcription_review=[
                 TranscriptionReviewConfig(**r) for r in project_config.get("transcription_review", [])
             ],
-            review_prompt_path=project_config.get("review_prompt_path", "prompts/review.md")
+            prompts=project_config.get("prompts", {}),
         )
     
     @classmethod
@@ -172,3 +173,17 @@ class Project:
         project.save_config()
         
         return project 
+
+    def get_prompt_path(self, key: str) -> Path:
+        # If a custom prompt is set, use it; else use default in prompts_dir
+        if key in self.prompts:
+            return Path(self.prompts[key])
+        default_map = {
+            "transcription_review": self.prompts_dir / "transcription_review.md",
+            "transcribe": self.prompts_dir / "transcribe.md",
+            "finalize_transcription": self.prompts_dir / "finalize_transcription.j2",
+            "finalize_translation": self.prompts_dir / "finalize_translation.j2",
+            "translate": self.prompts_dir / "translate.j2",
+            "translation_review": self.prompts_dir / "translation_review.j2",
+        }
+        return default_map[key] 

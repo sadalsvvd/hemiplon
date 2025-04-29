@@ -10,6 +10,7 @@ from lib.transcribe import process_directory
 from utils.diff_checker import compare_multiple_folders
 from lib.pdf_processor import PDFProcessor
 from lib.llm_service import LLMService
+from lib.file_manager import FileManager
 
 # Configure logging
 logging.basicConfig(
@@ -93,7 +94,7 @@ class ProjectManager:
             folders=transcription_dirs, labels=labels, file_pattern="*.md"
         )
         diffs_dir = self.project.transcription_dir / "diffs"
-        diffs_dir.mkdir(parents=True, exist_ok=True)
+        FileManager.ensure_dir(diffs_dir)
         prefix = self.project.name  # e.g. CCAG01
         for filename, diff_text in diffs.items():
             if filename.endswith("_transcribed.md"):
@@ -102,7 +103,7 @@ class ProjectManager:
                 base = filename.rsplit(".", 1)[0]
                 diff_filename = f"{base}_diff.md"
             diff_path = diffs_dir / diff_filename
-            self.write_text_file(diff_path, diff_text)
+            FileManager.write_text(diff_path, diff_text)
             logger.info(f"Wrote diff to {diff_path}")
 
     async def review_transcriptions(self) -> None:
@@ -116,13 +117,12 @@ class ProjectManager:
             logger.error("No diffs directory found. Run generate_diffs first.")
             return
         reviewed_dir = self.project.transcription_dir / "transcribed_reviewed"
-        reviewed_dir.mkdir(parents=True, exist_ok=True)
+        FileManager.ensure_dir(reviewed_dir)
         with open(self.project.review_prompt_path, "r") as f:
             review_prompt = f.read()
         tasks = []
         for diff_file in sorted(diffs_dir.glob("*_diff.md")):
-            with open(diff_file, "r") as f:
-                diffs_content = f.read()
+            diffs_content = FileManager.read_text(diff_file)
             for config in self.project.transcription_review:
                 tasks.append(self._review_transcription_task(diff_file, config, review_prompt, diffs_content, reviewed_dir))
         await asyncio.gather(*tasks)
@@ -138,7 +138,7 @@ class ProjectManager:
                 assert review_text is not None, "Review text is None"
                 base_name = diff_file.name.replace("_diff.md", "_transcribed_reviewed.md")
                 review_path = reviewed_dir / base_name
-                self.write_text_file(review_path, review_text)
+                FileManager.write_text(review_path, review_text)
                 logger.info(f"Review for {diff_file.name} saved to {review_path}")
             except Exception as e:
                 logger.error(f"Error during review of {diff_file.name} with {config.model}: {str(e)}")
@@ -155,7 +155,7 @@ class ProjectManager:
             return
         transcription_dirs = self._get_transcription_dirs(as_str=False)
         final_dir = self.project.transcription_dir / "final"
-        final_dir.mkdir(parents=True, exist_ok=True)
+        FileManager.ensure_dir(final_dir)
         tasks = []
         for review_file in sorted(reviewed_dir.glob("*_transcribed_reviewed.md")):
             tasks.append(self._finalize_transcription_task(review_file, transcription_dirs, final_dir))
@@ -168,13 +168,11 @@ class ProjectManager:
             candidates = list(tdir.glob(f"{page_id}_transcribed.md"))
             if candidates:
                 label = tdir.name
-                with open(candidates[0], "r") as f:
-                    originals[label] = f.read()
+                originals[label] = FileManager.read_text(candidates[0])
         if not originals:
             logger.warning(f"No originals found for {page_id}")
             return
-        with open(review_file, "r") as f:
-            review_text = f.read().strip()
+        review_text = FileManager.read_text(review_file).strip()
         if review_text == "Consensus.":
             final_text = originals[next(iter(originals))]
             logger.info(f"Consensus for {page_id}: using {next(iter(originals))} as final output.")
@@ -195,7 +193,7 @@ class ProjectManager:
                 logger.error(f"Error during finalization for {page_id}: {str(e)}")
                 return
         final_path = final_dir / f"{page_id}_final.md"
-        self.write_text_file(final_path, final_text)
+        FileManager.write_text(final_path, final_text)
         logger.info(f"Final transcription for {page_id} saved to {final_path}")
 
     async def run_translation(self) -> None:
@@ -213,21 +211,19 @@ class ProjectManager:
             for run in range(config.runs):
                 run_suffix = f"_{run+1}" if config.runs > 1 else ""
                 out_dir = self.project.translation_dir / f"translated_{config.model}{run_suffix}"
-                out_dir.mkdir(parents=True, exist_ok=True)
+                FileManager.ensure_dir(out_dir)
                 for idx, page_id in enumerate(page_ids):
                     tasks.append(self._run_translation_task(config, page_id, idx, page_ids, page_id_to_file, out_dir))
         await asyncio.gather(*tasks)
 
     async def _run_translation_task(self, config, page_id, idx, page_ids, page_id_to_file, out_dir):
         final_file = page_id_to_file[page_id]
-        with open(final_file, "r") as f:
-            final_text = f.read()
+        final_text = FileManager.read_text(final_file)
         previous_source_text = None
         if idx > 0:
             prev_page_id = page_ids[idx-1]
             prev_file = page_id_to_file[prev_page_id]
-            with open(prev_file, "r") as pf:
-                previous_source_text = pf.read()
+            previous_source_text = FileManager.read_text(prev_file)
         prompt = self.llm_service.render_prompt(
             "prompts/translate.j2",
             {"source_text": final_text, "previous_source_text": previous_source_text}
@@ -239,8 +235,7 @@ class ProjectManager:
             )
             assert translation is not None, "Translation is None"
             out_path = out_dir / f"{page_id}_translated.md"
-            with open(out_path, "w") as out_f:
-                out_f.write(translation)
+            FileManager.write_text(out_path, translation)
             logger.info(f"Translation for {page_id} saved to {out_path}")
         except Exception as e:
             logger.error(f"Error during translation for {page_id}: {str(e)}")
@@ -277,7 +272,7 @@ class ProjectManager:
             folders=translation_dirs, labels=labels, file_pattern="*.md"
         )
         diffs_dir = self.project.translation_dir / "diffs"
-        diffs_dir.mkdir(parents=True, exist_ok=True)
+        FileManager.ensure_dir(diffs_dir)
         for filename, diff_text in diffs.items():
             if filename.endswith("_translated.md"):
                 diff_filename = filename.replace("_translated.md", "_diff.md")
@@ -285,7 +280,7 @@ class ProjectManager:
                 base = filename.rsplit(".", 1)[0]
                 diff_filename = f"{base}_diff.md"
             diff_path = diffs_dir / diff_filename
-            self.write_text_file(diff_path, diff_text)
+            FileManager.write_text(diff_path, diff_text)
             logger.info(f"Wrote translation diff to {diff_path}")
 
     async def review_translations(self) -> None:
@@ -296,11 +291,10 @@ class ProjectManager:
             logger.error("No translation diffs directory found. Run generate_translation_diffs first.")
             return
         reviewed_dir = self.project.translation_dir / "reviewed"
-        reviewed_dir.mkdir(parents=True, exist_ok=True)
+        FileManager.ensure_dir(reviewed_dir)
         tasks = []
         for diff_file in sorted(diffs_dir.glob("*_diff.md")):
-            with open(diff_file, "r") as f:
-                diffs_content = f.read()
+            diffs_content = FileManager.read_text(diff_file)
             review_prompt = self.llm_service.render_prompt(
                 "prompts/translation_review.j2",
                 {"diff_content": diffs_content}
@@ -320,7 +314,7 @@ class ProjectManager:
                 assert review_text is not None, "Review text is None"
                 base_name = diff_file.name.replace("_diff.md", "_reviewed.md")
                 review_path = reviewed_dir / base_name
-                self.write_text_file(review_path, review_text)
+                FileManager.write_text(review_path, review_text)
                 logger.info(f"Translation review for {diff_file.name} saved to {review_path}")
             except Exception as e:
                 logger.error(f"Error during translation review of {diff_file.name} with {config.model}: {str(e)}")
@@ -335,7 +329,7 @@ class ProjectManager:
             return
         translation_dirs = self._get_translation_dirs(as_str=False)
         final_dir = self.project.translation_dir / "final"
-        final_dir.mkdir(parents=True, exist_ok=True)
+        FileManager.ensure_dir(final_dir)
         tasks = []
         for review_file in sorted(reviewed_dir.glob("*_reviewed.md")):
             tasks.append(self._finalize_translation_task(review_file, translation_dirs, final_dir))
@@ -348,10 +342,8 @@ class ProjectManager:
             candidates = list(tdir.glob(f"{page_id}_translated.md"))
             if candidates:
                 label = tdir.name
-                with open(candidates[0], "r") as f:
-                    originals[label] = f.read()
-        with open(review_file, "r") as f:
-            review_text = f.read().strip()
+                originals[label] = FileManager.read_text(candidates[0])
+        review_text = FileManager.read_text(review_file).strip()
         if review_text == "Consensus.":
             if originals:
                 final_text = originals[next(iter(originals))]
@@ -359,8 +351,7 @@ class ProjectManager:
             else:
                 final_trans_path = self.project.transcription_dir / "final" / f"{page_id}_final.md"
                 if final_trans_path.exists():
-                    with open(final_trans_path, "r") as f:
-                        final_text = f.read()
+                    final_text = FileManager.read_text(final_trans_path)
                     logger.info(f"Consensus for {page_id}: using finalized transcription as final translation.")
                 else:
                     logger.warning(f"Consensus for {page_id}: no translation or finalized transcription found.")
@@ -382,7 +373,7 @@ class ProjectManager:
                 logger.error(f"Error during translation finalization for {page_id}: {str(e)}")
                 return
         final_path = final_dir / f"{page_id}_final.md"
-        self.write_text_file(final_path, final_text)
+        FileManager.write_text(final_path, final_text)
         logger.info(f"Final translation for {page_id} saved to {final_path}")
 
     async def run_pipeline(
@@ -433,11 +424,6 @@ class ProjectManager:
         if "translation-finalize" in stages:
             await self.finalize_translations()
         logger.info(f"Pipeline complete for project {self.project.name}")
-
-    @staticmethod
-    def write_text_file(path, text):
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(text)
 
 
 def create_project(name: str, input_file: str) -> Project:

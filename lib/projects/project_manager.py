@@ -68,34 +68,30 @@ class ProjectManager:
         dirs = []
         for config in self.project.transcription:
             for run in range(config.runs):
-                run_suffix = f"_{run + 1}" if config.runs > 1 else ""
-                dir_name = f"transcribed_{config.model}{run_suffix}"
-                dir_path = self.project.transcription_dir / dir_name
+                dir_path = self.project.transcription_run_dir(config.model, run + 1)
                 dirs.append(str(dir_path) if as_str else dir_path)
         return dirs
 
-    def generate_diffs(self) -> None:
+    def generate_transcription_diffs(self) -> None:
         """Generate diffs between different transcription runs and write each to its own file."""
         transcription_dirs = self._get_transcription_dirs(as_str=True)
         labels = []
         for config in self.project.transcription:
             for run in range(config.runs):
-                run_suffix = f"_{run + 1}" if config.runs > 1 else ""
-                dir_name = f"transcribed_{config.model}{run_suffix}"
-                dir_path = self.project.transcription_dir / dir_name
+                dir_path = self.project.transcription_run_dir(config.model, run + 1)
                 metadata_path = dir_path / "run.yaml"
                 if metadata_path.exists():
                     with open(metadata_path, "r") as f:
                         metadata = yaml.safe_load(f)
                         labels.append(metadata["name"])
                 else:
-                    labels.append(dir_name)
+                    labels.append(dir_path.name)
         diffs = compare_multiple_folders(
             folders=transcription_dirs, labels=labels, file_pattern="*.md"
         )
-        diffs_dir = self.project.transcription_dir / "diffs"
+        diffs_dir = self.project.transcription_diffs_dir
         FileManager.ensure_dir(diffs_dir)
-        prefix = self.project.name  # e.g. CCAG01
+
         for filename, diff_text in diffs.items():
             if filename.endswith("_transcribed.md"):
                 diff_filename = filename.replace("_transcribed.md", "_diff.md")
@@ -112,11 +108,11 @@ class ProjectManager:
         if not self.project.transcription_review:
             logger.warning("No transcription review configuration found")
             return
-        diffs_dir = self.project.transcription_dir / "diffs"
+        diffs_dir = self.project.transcription_diffs_dir
         if not diffs_dir.exists():
             logger.error("No diffs directory found. Run generate_diffs first.")
             return
-        reviewed_dir = self.project.transcription_dir / "transcribed_reviewed"
+        reviewed_dir = self.project.transcription_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
         with open(self.project.review_prompt_path, "r") as f:
             review_prompt = f.read()
@@ -149,12 +145,12 @@ class ProjectManager:
         logger.info(
             f"Starting transcription finalization for project {self.project.name}"
         )
-        reviewed_dir = self.project.transcription_dir / "transcribed_reviewed"
+        reviewed_dir = self.project.transcription_reviewed_dir
         if not reviewed_dir.exists():
             logger.error("No reviewed directory found. Run review_transcriptions first.")
             return
         transcription_dirs = self._get_transcription_dirs(as_str=False)
-        final_dir = self.project.transcription_dir / "final"
+        final_dir = self.project.transcription_final_dir
         FileManager.ensure_dir(final_dir)
         tasks = []
         for review_file in sorted(reviewed_dir.glob("*_transcribed_reviewed.md")):
@@ -199,7 +195,7 @@ class ProjectManager:
     async def run_translation(self) -> None:
         """Run translation for all finalized transcriptions using configured models and runs. Supports previous_source_text for context."""
         logger.info(f"Starting translation for project {self.project.name}")
-        final_dir = self.project.transcription_dir / "final"
+        final_dir = self.project.transcription_final_dir
         if not final_dir.exists():
             logger.error("No finalized transcriptions found. Run finalize_transcriptions first.")
             return
@@ -245,9 +241,7 @@ class ProjectManager:
         dirs = []
         for config in self.project.translation:
             for run in range(config.runs):
-                run_suffix = f"_{run+1}" if config.runs > 1 else ""
-                dir_name = f"translated_{config.model}{run_suffix}"
-                dir_path = self.project.translation_dir / dir_name
+                dir_path = self.project.translation_run_dir(config.model, run + 1)
                 dirs.append(str(dir_path) if as_str else dir_path)
         return dirs
 
@@ -258,20 +252,18 @@ class ProjectManager:
         labels = []
         for config in self.project.translation:
             for run in range(config.runs):
-                run_suffix = f"_{run+1}" if config.runs > 1 else ""
-                dir_name = f"translated_{config.model}{run_suffix}"
-                dir_path = self.project.translation_dir / dir_name
+                dir_path = self.project.translation_run_dir(config.model, run + 1)
                 metadata_path = dir_path / "run.yaml"
                 if metadata_path.exists():
                     with open(metadata_path, "r") as f:
                         metadata = yaml.safe_load(f)
                         labels.append(metadata["name"])
                 else:
-                    labels.append(dir_name)
+                    labels.append(dir_path.name)
         diffs = compare_multiple_folders(
             folders=translation_dirs, labels=labels, file_pattern="*.md"
         )
-        diffs_dir = self.project.translation_dir / "diffs"
+        diffs_dir = self.project.translation_diffs_dir
         FileManager.ensure_dir(diffs_dir)
         for filename, diff_text in diffs.items():
             if filename.endswith("_translated.md"):
@@ -286,11 +278,11 @@ class ProjectManager:
     async def review_translations(self) -> None:
         """Review translation differences and generate assessment for each diff file using the translation_review.j2 template."""
         logger.info(f"Starting translation review for project {self.project.name}")
-        diffs_dir = self.project.translation_dir / "diffs"
+        diffs_dir = self.project.translation_diffs_dir
         if not diffs_dir.exists():
             logger.error("No translation diffs directory found. Run generate_translation_diffs first.")
             return
-        reviewed_dir = self.project.translation_dir / "reviewed"
+        reviewed_dir = self.project.translation_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
         tasks = []
         for diff_file in sorted(diffs_dir.glob("*_diff.md")):
@@ -323,12 +315,12 @@ class ProjectManager:
     async def finalize_translations(self) -> None:
         """Generate a final unified translation for each page using all originals and the review rationale. If the review is 'Consensus.', just use the first available translation, or fall back to the finalized transcription."""
         logger.info(f"Starting translation finalization for project {self.project.name}")
-        reviewed_dir = self.project.translation_dir / "reviewed"
+        reviewed_dir = self.project.translation_reviewed_dir
         if not reviewed_dir.exists():
             logger.error("No reviewed translation directory found. Run review_translations first.")
             return
         translation_dirs = self._get_translation_dirs(as_str=False)
-        final_dir = self.project.translation_dir / "final"
+        final_dir = self.project.translation_final_dir
         FileManager.ensure_dir(final_dir)
         tasks = []
         for review_file in sorted(reviewed_dir.glob("*_reviewed.md")):
@@ -349,7 +341,7 @@ class ProjectManager:
                 final_text = originals[next(iter(originals))]
                 logger.info(f"Consensus for {page_id}: using {next(iter(originals))} as final translation.")
             else:
-                final_trans_path = self.project.transcription_dir / "final" / f"{page_id}_final.md"
+                final_trans_path = self.project.transcription_final_dir / f"{page_id}_final.md"
                 if final_trans_path.exists():
                     final_text = FileManager.read_text(final_trans_path)
                     logger.info(f"Consensus for {page_id}: using finalized transcription as final translation.")
@@ -410,7 +402,7 @@ class ProjectManager:
         if "transcription" in stages:
             await self.run_transcription(start_index=start_index, end_index=end_index)
         if "transcription-diff" in stages:
-            self.generate_diffs()
+            self.generate_transcription_diffs()
         if "transcription-review" in stages:
             await self.review_transcriptions()
         if "transcription-finalize" in stages:

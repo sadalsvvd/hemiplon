@@ -49,6 +49,38 @@ class Project:
     def config_path(self) -> Path:
         return self.project_dir / "config.yaml"
     
+    @property
+    def transcription_diffs_dir(self) -> Path:
+        return self.transcription_dir / "diffs"
+
+    @property
+    def transcription_reviewed_dir(self) -> Path:
+        return self.transcription_dir / "reviewed"
+
+    @property
+    def transcription_final_dir(self) -> Path:
+        return self.transcription_dir / "final"
+
+    def transcription_run_dir(self, model: str, run: int = 1) -> Path:
+        run_suffix = f"_{run}" if run > 1 else ""
+        return self.transcription_dir / f"transcribed_{model}{run_suffix}"
+
+    @property
+    def translation_diffs_dir(self) -> Path:
+        return self.translation_dir / "diffs"
+
+    @property
+    def translation_reviewed_dir(self) -> Path:
+        return self.translation_dir / "reviewed"
+
+    @property
+    def translation_final_dir(self) -> Path:
+        return self.translation_dir / "final"
+
+    def translation_run_dir(self, model: str, run: int = 1) -> Path:
+        run_suffix = f"_{run}" if run > 1 else ""
+        return self.translation_dir / f"translated_{model}{run_suffix}"
+    
     def setup_directories(self) -> None:
         """Create necessary project directories"""
         self.project_dir.mkdir(parents=True, exist_ok=True)

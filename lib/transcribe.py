@@ -7,6 +7,7 @@ from openai import OpenAI
 from pathlib import Path
 import time
 import yaml
+from utils.pipeline_utils import log_and_filter_unprocessed
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -160,11 +161,26 @@ async def process_directory(
         end_index = len(image_files)
     image_files = image_files[start_index:end_index]
     logger.info(f"Processing images from index {start_index} to {end_index}")
-    
+
+    # Prepare output directory
+    output_dir = Path(output_dir) / f"transcribed{outpath_postfix}"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use unified resumable logic
+    to_process = log_and_filter_unprocessed(
+        input_files=image_files,
+        output_dir=output_dir,
+        output_suffix="_transcribed.md",
+        stage_name=f"Transcription{outpath_postfix}",
+        logger=logger
+    )
+    if not to_process:
+        return
+
     # Create semaphore to limit concurrent requests
     semaphore = asyncio.Semaphore(max_concurrent)
     
-    # Create tasks for all images
+    # Create tasks for all images that need processing
     tasks = [
         process_image(
             client=client,
@@ -175,8 +191,10 @@ async def process_directory(
             model=model,
             output_dir=output_dir
         )
-        for img in image_files
+        for img in to_process
     ]
     
+    logger.info(f"Starting transcription for {len(to_process)} files...")
     # Process all images concurrently, with max_concurrent limit
     await asyncio.gather(*tasks)
+    logger.info("Transcription step complete.")

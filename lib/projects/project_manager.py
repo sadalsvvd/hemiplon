@@ -11,6 +11,7 @@ from utils.diff_checker import compare_multiple_folders
 from lib.pdf_processor import PDFProcessor
 from lib.llm_service import LLMService
 from lib.file_manager import FileManager
+from utils.pipeline_utils import get_unprocessed_files, log_and_filter_unprocessed, run_tasks_for_files
 
 # Configure logging
 logging.basicConfig(
@@ -115,12 +116,26 @@ class ProjectManager:
         reviewed_dir = self.project.transcription_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
         review_prompt = FileManager.read_text(self.project.get_prompt_path("transcription_review"))
-        tasks = []
-        for diff_file in sorted(diffs_dir.glob("*_diff.md")):
+        input_files = sorted(diffs_dir.glob("*_diff.md"))
+        to_process = log_and_filter_unprocessed(
+            input_files=input_files,
+            output_dir=reviewed_dir,
+            output_suffix="_transcribed_reviewed.md",
+            stage_name="Transcription Review",
+            logger=logger
+        )
+        if not to_process:
+            return
+        async def review_task(diff_file):
             diffs_content = FileManager.read_text(diff_file)
             for config in self.project.transcription_review:
-                tasks.append(self._review_transcription_task(diff_file, config, review_prompt, diffs_content, reviewed_dir))
-        await asyncio.gather(*tasks)
+                await self._review_transcription_task(diff_file, config, review_prompt, diffs_content, reviewed_dir)
+        await run_tasks_for_files(
+            to_process,
+            review_task,
+            logger=logger,
+            stage_name="Transcription Review"
+        )
 
     async def _review_transcription_task(self, diff_file, config, review_prompt, diffs_content, reviewed_dir):
         async with self.llm_service.semaphore:
@@ -151,10 +166,24 @@ class ProjectManager:
         transcription_dirs = self._get_transcription_dirs(as_str=False)
         final_dir = self.project.transcription_final_dir
         FileManager.ensure_dir(final_dir)
-        tasks = []
-        for review_file in sorted(reviewed_dir.glob("*_transcribed_reviewed.md")):
-            tasks.append(self._finalize_transcription_task(review_file, transcription_dirs, final_dir))
-        await asyncio.gather(*tasks)
+        input_files = sorted(reviewed_dir.glob("*_transcribed_reviewed.md"))
+        to_process = log_and_filter_unprocessed(
+            input_files=input_files,
+            output_dir=final_dir,
+            output_suffix="_final.md",
+            stage_name="Transcription Finalization",
+            logger=logger
+        )
+        if not to_process:
+            return
+        async def finalize_task(review_file):
+            await self._finalize_transcription_task(review_file, transcription_dirs, final_dir)
+        await run_tasks_for_files(
+            to_process,
+            finalize_task,
+            logger=logger,
+            stage_name="Transcription Finalization"
+        )
 
     async def _finalize_transcription_task(self, review_file, transcription_dirs, final_dir):
         page_id = review_file.name.replace("_transcribed_reviewed.md", "")

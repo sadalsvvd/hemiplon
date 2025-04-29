@@ -10,6 +10,7 @@ from typing import List, Dict
 import argparse
 import difflib
 import re
+import yaml
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -25,11 +26,39 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode("utf-8")
 
+def write_run_metadata(output_dir: str | Path, run_name: str) -> None:
+    """
+    Write run metadata to a YAML file in the output directory.
+    
+    Args:
+        output_dir: Output directory path
+        run_name: Name of the run
+    """
+    metadata = {"name": run_name}
+    metadata_path = Path(output_dir) / "run.yaml"
+    with open(metadata_path, 'w') as f:
+        yaml.dump(metadata, f, default_flow_style=False)
+    logger.info(f"Run metadata written to {metadata_path}")
+
 # Function to write transcription to a markdown file
-def write_transcription(image_name: str, transcription: str, outpath_postfix: str = ""):
+def write_transcription(image_name: str, transcription: str, outpath_postfix: str = "", output_dir: str | Path = "output"):
+    """
+    Write transcription to a markdown file in the specified output directory.
+    
+    Args:
+        image_name: Name of the input image
+        transcription: Transcription text to write
+        outpath_postfix: Optional postfix for output directory name
+        output_dir: Base output directory path
+    """
     # Create output directory with postfix if provided
-    output_dir = Path("output") / f"transcribed{outpath_postfix}"
+    output_dir = Path(output_dir) / f"transcribed{outpath_postfix}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Write run metadata if it doesn't exist
+    if not (output_dir / "run.yaml").exists():
+        run_name = f"transcribed{outpath_postfix}"
+        write_run_metadata(output_dir, run_name)
     
     # Write to output directory
     output_path = output_dir / f"{Path(image_name).stem}_transcribed.md"
@@ -44,7 +73,8 @@ async def process_image(
     ocr_prompt: str,
     semaphore: asyncio.Semaphore,
     outpath_postfix: str = "",
-    model: str = "gpt-4.1"
+    model: str = "gpt-4.1",
+    output_dir: str | Path = "output"
 ):
     async with semaphore:  # This ensures we only have max_concurrent requests at once
         start_time = time.time()
@@ -82,7 +112,7 @@ async def process_image(
             assert transcription is not None, f"Transcription is None for {image_name}"
             
             # Write transcription immediately
-            write_transcription(image_name, transcription, outpath_postfix)
+            write_transcription(image_name, transcription, outpath_postfix, output_dir)
             return transcription
             
         except Exception as e:
@@ -97,7 +127,8 @@ async def process_directory(
     start_index: int = 0,
     end_index: int | None = None,
     outpath_postfix: str = "",
-    model: str = "gpt-4.1"
+    model: str = "gpt-4.1",
+    output_dir: str | Path = "output"
 ):
     client = OpenAI(api_key=api_key)
     
@@ -121,7 +152,7 @@ async def process_directory(
     
     # Create tasks for all images
     tasks = [
-        process_image(client, str(img), ocr_prompt_contents, semaphore, outpath_postfix, model)
+        process_image(client, str(img), ocr_prompt_contents, semaphore, outpath_postfix, model, output_dir)
         for img in image_files
     ]
     

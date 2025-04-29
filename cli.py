@@ -3,7 +3,7 @@ import asyncio
 from pathlib import Path
 from typing import List
 
-from project_manager import create_project, load_project, ProjectManager
+from lib.projects.project_manager import create_project, load_project, ProjectManager
 
 def main():
     parser = argparse.ArgumentParser(description="Manage transcription projects")

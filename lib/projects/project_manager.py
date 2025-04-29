@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 import yaml
 
-from project import Project
+from .project import Project
 from lib.pdf import read_pdf, convert_pdf_pages_to_images, split_spreads_to_pages
 from lib.transcribe import process_directory, encode_image, write_transcription
 from utils.diff_checker import compare_multiple_folders, save_diffs_to_file

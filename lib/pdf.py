@@ -3,8 +3,8 @@ import PyPDF2
 from PIL import Image
 import pdf2image
 import logging
-from image_processing.splitter import split_two_page
-from image_processing.cleaning import clean_small_artifacts
+from lib.image_processing.splitter import split_two_page
+from lib.image_processing.cleaning import clean_small_artifacts
 import cv2
 from pathlib import Path
 
@@ -33,13 +33,16 @@ def convert_pdf_pages_to_images(pdf_path, page_range=None, output_dir=None):
     Args:
         pdf_path: Path to the PDF file
         page_range: Optional tuple of (start_page, end_page)
-        output_dir: Optional output directory. If None, uses 'images/spreads'
+        output_dir: Optional output directory. If None, raises ValueError
     """
     logging.info(
         f"Converting PDF pages from {pdf_path} to images, page_range={page_range}"
     )
     pdf_filename = os.path.splitext(os.path.basename(pdf_path))[0]
 
+    if output_dir is None:
+        raise ValueError("output_dir must be specified")
+    
     if page_range:
         start_page, end_page = page_range
         logging.info(f"Converting pages {start_page} to {end_page}")
@@ -55,8 +58,6 @@ def convert_pdf_pages_to_images(pdf_path, page_range=None, output_dir=None):
         page_offset = 1
 
     # Create output directory if it doesn't exist
-    if output_dir is None:
-        output_dir = os.path.join("images", "spreads")
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -79,12 +80,13 @@ def split_spreads_to_pages(spread_images, output_dir=None, debug=False, clean_ar
     
     Args:
         spread_images: List of paths to spread images
-        output_dir: Optional output directory. If None, uses 'images/pages'
+        output_dir: Optional output directory. If None, raises ValueError
         debug: If True, enables debug image output for the splitting process
         clean_artifacts: If True, removes small dots and artifacts from the images
     """
     if output_dir is None:
-        output_dir = os.path.join("images", "pages")
+        raise ValueError("output_dir must be specified")
+    
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 

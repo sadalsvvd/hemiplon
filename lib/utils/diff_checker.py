@@ -151,26 +151,6 @@ def find_word_differences(text1: str, text2: str) -> List[Tuple[str, str]]:
     
     return differences
 
-def find_greek_variations(texts: List[str]) -> List[Tuple[str, str, str]]:
-    """Find variations in Greek text between versions."""
-    # Basic Greek unicode range pattern
-    greek_pattern = re.compile(r'[\u0370-\u03FF\u1F00-\u1FFF]+')
-    
-    variations = []
-    for i, text1 in enumerate(texts):
-        for j in range(i + 1, len(texts)):
-            text2 = texts[j]
-            # Find all Greek text in both versions
-            greek1 = greek_pattern.finditer(text1)
-            greek2 = greek_pattern.finditer(text2)
-            
-            # Compare corresponding Greek segments
-            for g1, g2 in zip(greek1, greek2):
-                if g1.group() != g2.group():
-                    variations.append((g1.group(), g2.group(), f"Version {i} vs {j}"))
-    
-    return variations
-
 def categorize_differences(texts: List[str], labels: List[str]) -> Dict[str, List[str]]:
     """Categorize differences between versions."""
     categories = defaultdict(list)
@@ -259,14 +239,6 @@ def generate_multi_way_diff(texts: List[str], labels: List[str]) -> str:
     
     # Build the diff output
     output = []
-    
-    # Find Greek variations
-    greek_vars = find_greek_variations(normalized_texts)
-    if greek_vars:
-        output.append("\n[GREEK TEXT VARIATIONS]")
-        for old, new, version in greek_vars:
-            output.append(f"{version}:")
-            output.append(f"- {old} → {new}")
     
     # Process each paragraph
     for para_idx in range(max(len(p) for p in paragraphs)):
@@ -382,6 +354,10 @@ def compare_multiple_folders(folders: List[str], labels: List[str], file_pattern
     """
     if len(folders) != len(labels):
         raise ValueError("Number of folders must match number of labels")
+
+    if len(folders) < 2:
+        logging.warning("compare_multiple_folders called with fewer than 2 folders. No diff to compute.")
+        return {}
     
     # Setup logging
     logging.basicConfig(level=logging.INFO, 

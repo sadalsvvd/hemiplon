@@ -1,0 +1,21 @@
+{
+  "configurations": [
+    {
+      "name": "Debug Hemiplon CLI transcription-diff",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "cli",
+      "args": [
+          "run",
+          "CCAG_1_smol",
+          "--stages",
+          "transcription-diff"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+          "PYTHONPATH": "${workspaceFolder}"
+      }
+    }
+  ]
+}

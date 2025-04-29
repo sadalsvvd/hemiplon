@@ -63,7 +63,7 @@ class Project:
         return self.transcription_dir / "final"
 
     def transcription_run_dir(self, model: str, run: int = 1) -> Path:
-        run_suffix = f"_{run}" if run > 1 else ""
+        run_suffix = f"_{run}" if run >= 1 else ""
         return self.transcription_dir / f"transcribed_{model}{run_suffix}"
 
     @property
@@ -79,7 +79,7 @@ class Project:
         return self.translation_dir / "final"
 
     def translation_run_dir(self, model: str, run: int = 1) -> Path:
-        run_suffix = f"_{run}" if run > 1 else ""
+        run_suffix = f"_{run}" if run >= 1 else ""
         return self.translation_dir / f"translated_{model}{run_suffix}"
     
     def setup_directories(self) -> None:

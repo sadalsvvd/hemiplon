@@ -1,18 +1,14 @@
 import logging
-from pathlib import Path
-import shutil
 from typing import List
 import asyncio
 import os
 from dotenv import load_dotenv
-from openai import OpenAI
 import yaml
-import jinja2
 
 from .project import Project
 from lib.transcribe import process_directory
 from utils.diff_checker import compare_multiple_folders
-from lib.projects.pdf_processor import PDFProcessor
+from lib.pdf_processor import PDFProcessor
 from lib.llm_service import LLMService
 
 # Configure logging

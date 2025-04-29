@@ -7,11 +7,13 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 import yaml
+import jinja2
 
 from .project import Project
 from lib.pdf import read_pdf, convert_pdf_pages_to_images, split_spreads_to_pages
 from lib.transcribe import process_directory, encode_image, write_transcription
 from utils.diff_checker import compare_multiple_folders, save_diffs_to_file
+from lib.projects.pdf_processor import PDFProcessor
 
 # Configure logging
 logging.basicConfig(
@@ -29,27 +31,15 @@ class ProjectManager:
     def __init__(self, project: Project):
         self.project = project
         self.client = OpenAI(api_key=api_key)
+        self.llm_semaphore = asyncio.Semaphore(5)
 
     async def process_pdf(self) -> None:
         """Convert PDF to individual page images"""
         logger.info(f"Processing PDF for project {self.project.name}")
 
-        # Read PDF
-        pdf_reader = read_pdf(self.project.input_file)
-
-        # Convert to spread images
-        spread_images = convert_pdf_pages_to_images(
-            self.project.input_file, page_range=(1, len(pdf_reader.pages))
-        )
-
-        # Split spreads into individual pages
-        page_images = split_spreads_to_pages(spread_images)
-
-        # Move images to project directory
-        for img in page_images:
-            shutil.move(img, self.project.images_dir / Path(img).name)
-
-        logger.info(f"PDF processing complete for {self.project.name}")
+        processor = PDFProcessor(self.project)
+        page_images = processor.process_pdf()
+        logger.info(f"PDF processing complete for {self.project.name} ({len(page_images)} pages)")
 
     async def run_transcription(
         self, start_index: int = 0, end_index: int | None = None
@@ -75,7 +65,7 @@ class ProjectManager:
                     end_index=end_index,
                     outpath_postfix=f"_{config.model}{run_suffix}",
                     model=config.model,
-                    output_dir=str(self.project.output_dir),
+                    output_dir=str(self.project.transcription_dir),
                 )
 
     def generate_diffs(self) -> None:
@@ -88,7 +78,7 @@ class ProjectManager:
             for run in range(config.runs):
                 run_suffix = f"_{run + 1}" if config.runs > 1 else ""
                 dir_name = f"transcribed_{config.model}{run_suffix}"
-                dir_path = self.project.output_dir / dir_name
+                dir_path = self.project.transcription_dir / dir_name
 
                 # Read run metadata
                 metadata_path = dir_path / "run.yaml"
@@ -107,7 +97,7 @@ class ProjectManager:
         )
 
         # Write each diff to its own file in output/diffs
-        diffs_dir = self.project.output_dir / "diffs"
+        diffs_dir = self.project.transcription_dir / "diffs"
         diffs_dir.mkdir(parents=True, exist_ok=True)
 
         prefix = self.project.name  # e.g. CCAG01
@@ -128,144 +118,334 @@ class ProjectManager:
     async def review_transcriptions(self) -> None:
         """Review transcription differences and generate assessment for each diff file."""
         logger.info(f"Starting transcription review for project {self.project.name}")
-
-        # Check if we have review configuration
         if not self.project.transcription_review:
             logger.warning("No transcription review configuration found")
             return
-
-        # Directory containing per-page diffs
-        diffs_dir = self.project.output_dir / "diffs"
+        diffs_dir = self.project.transcription_dir / "diffs"
         if not diffs_dir.exists():
             logger.error("No diffs directory found. Run generate_diffs first.")
             return
-
-        # Output directory for reviewed transcriptions
-        reviewed_dir = self.project.output_dir / "transcribed_reviewed"
+        reviewed_dir = self.project.transcription_dir / "transcribed_reviewed"
         reviewed_dir.mkdir(parents=True, exist_ok=True)
-
-        # Read review prompt
         with open(self.project.review_prompt_path, "r") as f:
             review_prompt = f.read()
-
-        # For each diff file
+        tasks = []
         for diff_file in sorted(diffs_dir.glob("*_diff.md")):
             with open(diff_file, "r") as f:
                 diffs_content = f.read()
-
             for config in self.project.transcription_review:
-                logger.info(f"Reviewing {diff_file.name} with model {config.model}")
-                try:
-                    review_completion = self.client.chat.completions.create(
-                        model=config.model,
-                        messages=[
-                            {"role": "system", "content": review_prompt},
-                            {"role": "user", "content": diffs_content},
-                        ],
-                        max_tokens=24000,
-                    )
-                    review_text = review_completion.choices[0].message.content
-                    assert review_text is not None, "Review text is None"
-                    # Output file: CCAG01_page_####_transcribed_reviewed.md
-                    base_name = diff_file.name.replace(
-                        "_diff.md", "_transcribed_reviewed.md"
-                    )
-                    review_path = reviewed_dir / base_name
-                    with open(review_path, "w") as out_f:
-                        out_f.write(review_text)
-                    logger.info(f"Review for {diff_file.name} saved to {review_path}")
-                except Exception as e:
-                    logger.error(
-                        f"Error during review of {diff_file.name} with {config.model}: {str(e)}"
-                    )
-                    raise
+                tasks.append(self._review_transcription_task(diff_file, config, review_prompt, diffs_content, reviewed_dir))
+        await asyncio.gather(*tasks)
+
+    async def _review_transcription_task(self, diff_file, config, review_prompt, diffs_content, reviewed_dir):
+        async with self.llm_semaphore:
+            logger.info(f"Reviewing {diff_file.name} with model {config.model}")
+            try:
+                review_text = await asyncio.to_thread(
+                    self._blocking_review_transcription_call,
+                    config, review_prompt, diffs_content
+                )
+                assert review_text is not None, "Review text is None"
+                base_name = diff_file.name.replace("_diff.md", "_transcribed_reviewed.md")
+                review_path = reviewed_dir / base_name
+                with open(review_path, "w") as out_f:
+                    out_f.write(review_text)
+                logger.info(f"Review for {diff_file.name} saved to {review_path}")
+            except Exception as e:
+                logger.error(f"Error during review of {diff_file.name} with {config.model}: {str(e)}")
+                raise
+
+    def _blocking_review_transcription_call(self, config, review_prompt, diffs_content):
+        review_completion = self.client.chat.completions.create(
+            model=config.model,
+            messages=[
+                {"role": "system", "content": review_prompt},
+                {"role": "user", "content": diffs_content},
+            ],
+            max_tokens=24000,
+        )
+        return review_completion.choices[0].message.content
 
     async def finalize_transcriptions(self) -> None:
         """Generate a final unified transcription for each page using all originals and the review rationale. If the review is 'Consensus.', just use the first available original."""
         logger.info(
             f"Starting transcription finalization for project {self.project.name}"
         )
-
-        # Directory containing per-page reviewed summaries
-        reviewed_dir = self.project.output_dir / "transcribed_reviewed"
+        reviewed_dir = self.project.transcription_dir / "transcribed_reviewed"
         if not reviewed_dir.exists():
-            logger.error(
-                "No reviewed directory found. Run review_transcriptions first."
-            )
+            logger.error("No reviewed directory found. Run review_transcriptions first.")
             return
-
-        # Directory containing all original transcriptions
         transcription_dirs = []
         for config in self.project.transcription:
             for run in range(config.runs):
                 run_suffix = f"_{run + 1}" if config.runs > 1 else ""
                 dir_name = f"transcribed_{config.model}{run_suffix}"
-                dir_path = self.project.output_dir / dir_name
+                dir_path = self.project.transcription_dir / dir_name
                 transcription_dirs.append(dir_path)
-
-        # Output directory for final transcriptions
-        final_dir = self.project.output_dir / "final"
+        final_dir = self.project.transcription_dir / "final"
         final_dir.mkdir(parents=True, exist_ok=True)
-
-        # For each reviewed file
+        tasks = []
         for review_file in sorted(reviewed_dir.glob("*_transcribed_reviewed.md")):
-            page_id = review_file.name.replace("_transcribed_reviewed.md", "")
-            # Gather all original transcriptions for this page
-            originals = {}
-            for tdir in transcription_dirs:
-                # Find the matching file in this dir
-                candidates = list(tdir.glob(f"{page_id}_transcribed.md"))
-                if candidates:
-                    # Use the directory name as the label
-                    label = tdir.name
-                    with open(candidates[0], "r") as f:
-                        originals[label] = f.read()
-            if not originals:
-                # TODO: WHY IS THIS HAPPENING?
-                logger.warning(f"No originals found for {page_id}")
-                continue
-            # Read the review rationale
-            with open(review_file, "r") as f:
-                review_text = f.read().strip()
-            # If consensus, just use the first available original
-            if review_text == "Consensus.":
-                first_label = next(iter(originals))
-                final_text = originals[first_label]
-                logger.info(
-                    f"Consensus for {page_id}: using {first_label} as final output."
+            tasks.append(self._finalize_transcription_task(review_file, transcription_dirs, final_dir))
+        await asyncio.gather(*tasks)
+
+    async def _finalize_transcription_task(self, review_file, transcription_dirs, final_dir):
+        page_id = review_file.name.replace("_transcribed_reviewed.md", "")
+        originals = {}
+        for tdir in transcription_dirs:
+            candidates = list(tdir.glob(f"{page_id}_transcribed.md"))
+            if candidates:
+                label = tdir.name
+                with open(candidates[0], "r") as f:
+                    originals[label] = f.read()
+        if not originals:
+            logger.warning(f"No originals found for {page_id}")
+            return
+        with open(review_file, "r") as f:
+            review_text = f.read().strip()
+        if review_text == "Consensus.":
+            final_text = originals[next(iter(originals))]
+            logger.info(f"Consensus for {page_id}: using {next(iter(originals))} as final output.")
+        else:
+            originals_block = "".join([f"## {label}\n{text}\n\n" for label, text in originals.items()])
+            prompt = render_template(
+                "prompts/finalize_transcription.j2",
+                {"originals_block": originals_block, "review_summary": review_text}
+            )
+            config = self.project.transcription_review[0]
+            try:
+                final_text = await asyncio.to_thread(
+                    self._blocking_finalize_transcription_call,
+                    config, prompt
                 )
+                assert final_text is not None, "Final text is None"
+            except Exception as e:
+                logger.error(f"Error during finalization for {page_id}: {str(e)}")
+                return
+        final_path = final_dir / f"{page_id}_final.md"
+        with open(final_path, "w") as out_f:
+            out_f.write(final_text)
+        logger.info(f"Final transcription for {page_id} saved to {final_path}")
+
+    def _blocking_finalize_transcription_call(self, config, prompt):
+        completion = self.client.chat.completions.create(
+            model=config.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=24000,
+        )
+        return completion.choices[0].message.content
+
+    async def run_translation(self) -> None:
+        """Run translation for all finalized transcriptions using configured models and runs. Supports previous_source_text for context."""
+        logger.info(f"Starting translation for project {self.project.name}")
+        final_dir = self.project.transcription_dir / "final"
+        if not final_dir.exists():
+            logger.error("No finalized transcriptions found. Run finalize_transcriptions first.")
+            return
+        final_files = sorted(final_dir.glob("*_final.md"))
+        page_ids = [f.stem.replace("_final", "") for f in final_files]
+        page_id_to_file = {pid: f for pid, f in zip(page_ids, final_files)}
+        tasks = []
+        for config in self.project.translation:
+            for run in range(config.runs):
+                run_suffix = f"_{run+1}" if config.runs > 1 else ""
+                out_dir = self.project.translation_dir / f"translated_{config.model}{run_suffix}"
+                out_dir.mkdir(parents=True, exist_ok=True)
+                for idx, page_id in enumerate(page_ids):
+                    tasks.append(self._run_translation_task(config, page_id, idx, page_ids, page_id_to_file, out_dir))
+        await asyncio.gather(*tasks)
+
+    async def _run_translation_task(self, config, page_id, idx, page_ids, page_id_to_file, out_dir):
+        final_file = page_id_to_file[page_id]
+        with open(final_file, "r") as f:
+            final_text = f.read()
+        previous_source_text = None
+        if idx > 0:
+            prev_page_id = page_ids[idx-1]
+            prev_file = page_id_to_file[prev_page_id]
+            with open(prev_file, "r") as pf:
+                previous_source_text = pf.read()
+        prompt = render_template(
+            "prompts/translate.j2",
+            {"source_text": final_text, "previous_source_text": previous_source_text}
+        )
+        async with self.llm_semaphore:
+            try:
+                translation = await asyncio.to_thread(
+                    self._blocking_run_translation_call,
+                    config, prompt
+                )
+                assert translation is not None, "Translation is None"
+                out_path = out_dir / f"{page_id}_translated.md"
+                with open(out_path, "w") as out_f:
+                    out_f.write(translation)
+                logger.info(f"Translation for {page_id} saved to {out_path}")
+            except Exception as e:
+                logger.error(f"Error during translation for {page_id}: {str(e)}")
+                return
+
+    def _blocking_run_translation_call(self, config, prompt):
+        translation_completion = self.client.chat.completions.create(
+            model=config.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=24000,
+        )
+        return translation_completion.choices[0].message.content
+
+    def generate_translation_diffs(self) -> None:
+        """Generate diffs between different translation runs and write each to its own file."""
+        logger.info(f"Generating translation diffs for project {self.project.name}")
+        translation_dirs = []
+        labels = []
+        for config in self.project.translation:
+            for run in range(config.runs):
+                run_suffix = f"_{run+1}" if config.runs > 1 else ""
+                dir_name = f"translated_{config.model}{run_suffix}"
+                dir_path = self.project.translation_dir / dir_name
+                metadata_path = dir_path / "run.yaml"
+                if metadata_path.exists():
+                    with open(metadata_path, "r") as f:
+                        metadata = yaml.safe_load(f)
+                        labels.append(metadata["name"])
+                else:
+                    labels.append(dir_name)
+                translation_dirs.append(str(dir_path))
+        diffs = compare_multiple_folders(
+            folders=translation_dirs, labels=labels, file_pattern="*.md"
+        )
+        diffs_dir = self.project.translation_dir / "diffs"
+        diffs_dir.mkdir(parents=True, exist_ok=True)
+        for filename, diff_text in diffs.items():
+            if filename.endswith("_translated.md"):
+                diff_filename = filename.replace("_translated.md", "_diff.md")
             else:
-                # Compose the prompt
-                prompt = (
-                    "You are a scholarly assistant. Here are the original transcriptions from different models/runs, "
-                    "and a review summary of their differences and recommendations. "
-                    "Using both, produce the best possible unified transcription for this page.\n\n"
-                    "# Originals:\n"
+                base = filename.rsplit(".", 1)[0]
+                diff_filename = f"{base}_diff.md"
+            diff_path = diffs_dir / diff_filename
+            with open(diff_path, "w", encoding="utf-8") as f:
+                f.write(diff_text)
+            logger.info(f"Wrote translation diff to {diff_path}")
+
+    async def review_translations(self) -> None:
+        """Review translation differences and generate assessment for each diff file using the translation_review.j2 template."""
+        logger.info(f"Starting translation review for project {self.project.name}")
+        diffs_dir = self.project.translation_dir / "diffs"
+        if not diffs_dir.exists():
+            logger.error("No translation diffs directory found. Run generate_translation_diffs first.")
+            return
+        reviewed_dir = self.project.translation_dir / "reviewed"
+        reviewed_dir.mkdir(parents=True, exist_ok=True)
+        tasks = []
+        for diff_file in sorted(diffs_dir.glob("*_diff.md")):
+            with open(diff_file, "r") as f:
+                diffs_content = f.read()
+            review_prompt = render_template(
+                "prompts/translation_review.j2",
+                {"diff_content": diffs_content}
+            )
+            for config in self.project.translation:
+                tasks.append(self._review_translation_task(diff_file, config, review_prompt, reviewed_dir))
+        await asyncio.gather(*tasks)
+
+    async def _review_translation_task(self, diff_file, config, review_prompt, reviewed_dir):
+        async with self.llm_semaphore:
+            logger.info(f"Reviewing translation {diff_file.name} with model {config.model}")
+            try:
+                review_text = await asyncio.to_thread(
+                    self._blocking_review_translation_call,
+                    config, review_prompt
                 )
-                for label, text in originals.items():
-                    prompt += f"## {label}\n{text}\n\n"
-                prompt += (
-                    "# Review Summary:\n"
-                    + review_text
-                    + "\n\n# Final Unified Transcription (just the text, no commentary):\n"
+                assert review_text is not None, "Review text is None"
+                base_name = diff_file.name.replace("_diff.md", "_reviewed.md")
+                review_path = reviewed_dir / base_name
+                with open(review_path, "w") as out_f:
+                    out_f.write(review_text)
+                logger.info(f"Translation review for {diff_file.name} saved to {review_path}")
+            except Exception as e:
+                logger.error(f"Error during translation review of {diff_file.name} with {config.model}: {str(e)}")
+                return
+
+    def _blocking_review_translation_call(self, config, review_prompt):
+        review_completion = self.client.chat.completions.create(
+            model=config.model,
+            messages=[{"role": "system", "content": review_prompt}],
+            max_tokens=24000,
+        )
+        return review_completion.choices[0].message.content
+
+    async def finalize_translations(self) -> None:
+        """Generate a final unified translation for each page using all originals and the review rationale. If the review is 'Consensus.', just use the first available translation, or fall back to the finalized transcription."""
+        logger.info(f"Starting translation finalization for project {self.project.name}")
+        reviewed_dir = self.project.translation_dir / "reviewed"
+        if not reviewed_dir.exists():
+            logger.error("No reviewed translation directory found. Run review_translations first.")
+            return
+        translation_dirs = []
+        for config in self.project.translation:
+            for run in range(config.runs):
+                run_suffix = f"_{run+1}" if config.runs > 1 else ""
+                dir_name = f"translated_{config.model}{run_suffix}"
+                dir_path = self.project.translation_dir / dir_name
+                translation_dirs.append(dir_path)
+        final_dir = self.project.translation_dir / "final"
+        final_dir.mkdir(parents=True, exist_ok=True)
+        tasks = []
+        for review_file in sorted(reviewed_dir.glob("*_reviewed.md")):
+            tasks.append(self._finalize_translation_task(review_file, translation_dirs, final_dir))
+        await asyncio.gather(*tasks)
+
+    async def _finalize_translation_task(self, review_file, translation_dirs, final_dir):
+        page_id = review_file.name.replace("_reviewed.md", "")
+        originals = {}
+        for tdir in translation_dirs:
+            candidates = list(tdir.glob(f"{page_id}_translated.md"))
+            if candidates:
+                label = tdir.name
+                with open(candidates[0], "r") as f:
+                    originals[label] = f.read()
+        with open(review_file, "r") as f:
+            review_text = f.read().strip()
+        if review_text == "Consensus.":
+            if originals:
+                final_text = originals[next(iter(originals))]
+                logger.info(f"Consensus for {page_id}: using {next(iter(originals))} as final translation.")
+            else:
+                final_trans_path = self.project.transcription_dir / "final" / f"{page_id}_final.md"
+                if final_trans_path.exists():
+                    with open(final_trans_path, "r") as f:
+                        final_text = f.read()
+                    logger.info(f"Consensus for {page_id}: using finalized transcription as final translation.")
+                else:
+                    logger.warning(f"Consensus for {page_id}: no translation or finalized transcription found.")
+                    return
+        else:
+            originals_block = "".join([f"## {label}\n{text}\n\n" for label, text in originals.items()])
+            prompt = render_template(
+                "prompts/finalize_translation.j2",
+                {"originals_block": originals_block, "review_summary": review_text}
+            )
+            config = self.project.translation[0]
+            try:
+                final_text = await asyncio.to_thread(
+                    self._blocking_finalize_translation_call,
+                    config, prompt
                 )
-                # Use the first review model for finalization
-                config = self.project.transcription_review[0]
-                try:
-                    completion = self.client.chat.completions.create(
-                        model=config.model,
-                        messages=[{"role": "user", "content": prompt}],
-                        max_tokens=24000,
-                    )
-                    final_text = completion.choices[0].message.content
-                    assert final_text is not None, "Final text is None"
-                except Exception as e:
-                    logger.error(f"Error during finalization for {page_id}: {str(e)}")
-                    raise
-            final_path = final_dir / f"{page_id}_final.md"
-            with open(final_path, "w") as out_f:
-                out_f.write(final_text)
-            logger.info(f"Final transcription for {page_id} saved to {final_path}")
+                assert final_text is not None, "Final translation is None"
+            except Exception as e:
+                logger.error(f"Error during translation finalization for {page_id}: {str(e)}")
+                return
+        final_path = final_dir / f"{page_id}_final.md"
+        with open(final_path, "w") as out_f:
+            out_f.write(final_text)
+        logger.info(f"Final translation for {page_id} saved to {final_path}")
+
+    def _blocking_finalize_translation_call(self, config, prompt):
+        completion = self.client.chat.completions.create(
+            model=config.model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=24000,
+        )
+        return completion.choices[0].message.content
 
     async def run_pipeline(
         self,
@@ -275,16 +455,15 @@ class ProjectManager:
     ) -> None:
         """
         Run the complete project pipeline or specific stages.
-
+        
         Args:
             stages: List of stages to run. If None, runs all stages.
-                   Valid stages: ['pdf', 'transcription', 'transcription-diff', 'transcription-review', 'finalize']
+                   Valid stages: ['pdf', 'transcription', 'transcription-diff', 'transcription-review', 'transcription-finalize', 'translation', 'translation-diff', 'translation-review', 'translation-finalize']
             start_index: For transcription stage, index of first image to process (inclusive)
             end_index: For transcription stage, index of last image to process (exclusive)
         """
         logger.info(f"Starting pipeline for project {self.project.name}")
-
-        # If no stages specified, run all
+        
         if stages is None:
             stages = [
                 "pdf",
@@ -292,28 +471,29 @@ class ProjectManager:
                 "transcription-diff",
                 "transcription-review",
                 "transcription-finalize",
+                "translation",
+                "translation-diff",
+                "translation-review",
+                "translation-finalize",
             ]
-
-        # Process PDF
         if "pdf" in stages:
             await self.process_pdf()
-
-        # Run transcriptions
         if "transcription" in stages:
             await self.run_transcription(start_index=start_index, end_index=end_index)
-
-        # Generate diffs
         if "transcription-diff" in stages:
             self.generate_diffs()
-
-        # Run review
         if "transcription-review" in stages:
             await self.review_transcriptions()
-
-        # Run finalize
         if "transcription-finalize" in stages:
             await self.finalize_transcriptions()
-
+        if "translation" in stages:
+            await self.run_translation()
+        if "translation-diff" in stages:
+            self.generate_translation_diffs()
+        if "translation-review" in stages:
+            await self.review_translations()
+        if "translation-finalize" in stages:
+            await self.finalize_translations()
         logger.info(f"Pipeline complete for project {self.project.name}")
 
 
@@ -325,3 +505,11 @@ def create_project(name: str, input_file: str) -> Project:
 def load_project(name: str) -> Project:
     """Load an existing project"""
     return Project.from_yaml(name)
+
+def render_template(template_path: str, context: dict) -> str:
+    """Render a Jinja2 template from file with the given context."""
+    template_dir = Path(template_path).parent
+    template_name = Path(template_path).name
+    env = jinja2.Environment(loader=jinja2.FileSystemLoader(str(template_dir)))
+    template = env.get_template(template_name)
+    return template.render(**context)

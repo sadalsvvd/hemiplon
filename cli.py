@@ -5,6 +5,18 @@ from typing import List
 
 from lib.projects.project_manager import create_project, load_project, ProjectManager
 
+# Canonical stage order
+STAGE_ORDER = [
+    "pdf",
+    "transcription",
+    "transcription-diff",
+    "transcription-review",
+    "transcription-finalize",
+    "translation",
+    "translation-diff",
+    "translation-review",
+    "translation-finalize",
+]
 
 def main():
     parser = argparse.ArgumentParser(description="Manage transcription projects")
@@ -18,17 +30,17 @@ def main():
     # Run pipeline command
     run_parser = subparsers.add_parser("run", help="Run project pipeline")
     run_parser.add_argument("name", help="Project name")
-    run_parser.add_argument(
+    stages_group = run_parser.add_mutually_exclusive_group()
+    stages_group.add_argument(
         "--stages",
         nargs="*",
-        choices=[
-            "pdf",
-            "transcription",
-            "transcription-diff",
-            "transcription-review",
-            "transcription-finalize",
-        ],
-        help="Specific stages to run. If not specified, runs all stages.",
+        choices=STAGE_ORDER,
+        help="Specific stages to run. If not specified, runs all stages of both transcription and translation pipelines.",
+    )
+    stages_group.add_argument(
+        "--from-stage",
+        choices=STAGE_ORDER,
+        help="Run all stages starting from the specified stage (inclusive) in canonical order.",
     )
     run_parser.add_argument(
         "--start",
@@ -50,12 +62,20 @@ def main():
         print(f"Created project {args.name} in {project.project_dir}")
 
     elif args.command == "run":
+        # Compute stages to run
+        if args.stages:
+            stages = args.stages
+        elif args.from_stage:
+            idx = STAGE_ORDER.index(args.from_stage)
+            stages = STAGE_ORDER[idx:]
+        else:
+            stages = None
         # Load and run project
         project = load_project(args.name)
         manager = ProjectManager(project)
         asyncio.run(
             manager.run_pipeline(
-                stages=args.stages, start_index=args.start, end_index=args.end
+                stages=stages, start_index=args.start, end_index=args.end
             )
         )
 

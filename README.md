@@ -17,13 +17,34 @@ projects/
       page_001.jpg
       page_002.jpg
       ...
-    output/
+    transcription/
       transcribed_<model>_<run>/  # Each transcription run
         run.yaml                  # Run metadata
         page_001_transcribed.md
-        page_002_transcribed.md
         ...
-      transcription_diffs.txt     # Multi-way diffs between runs
+      diffs/                     # Per-page diffs between runs
+        page_001_diff.md
+        ...
+      transcribed_reviewed/      # Per-page review rationale
+        page_001_transcribed_reviewed.md
+        ...
+      final/                     # Final unified transcription per page
+        page_001_final.md
+        ...
+    translation/
+      translated_<model>_<run>/  # Each translation run
+        run.yaml
+        page_001_translated.md
+        ...
+      diffs/                     # Per-page diffs between translation runs
+        page_001_diff.md
+        ...
+      reviewed/                  # Per-page translation review rationale
+        page_001_reviewed.md
+        ...
+      final/                     # Final unified translation per page
+        page_001_final.md
+        ...
 ```
 
 Each run directory contains a `run.yaml` file that identifies the run by name, making it easier to track and compare different runs without relying on directory names.
@@ -39,24 +60,41 @@ uv run python -m cli create <name> <input_filename>
 
 This will:
 1. Create a project directory in `projects/<name>`
-2. Generate a default `config.yaml` with transcription settings
+2. Generate a default `config.yaml` with transcription and translation settings
 3. Set up the necessary subdirectories
 
 ## Running the Pipeline
 
-The pipeline consists of three stages:
+The pipeline consists of multiple stages, which can be run independently or together:
+
+### Transcription Pipeline Stages
 - `pdf`: Convert PDF to individual page images
 - `transcription`: Run OCR/transcription on images
-- `diffs`: Generate diffs between different transcription runs
+- `transcription-diff`: Generate per-page diffs between different transcription runs
+- `transcription-review`: Review diffs and generate rationale for each page
+- `transcription-finalize`: Produce a final unified transcription per page
 
-Run the complete pipeline:
+### Translation Pipeline Stages
+- `translation`: Translate each reviewed transcription into English (or other target language)
+- `translation-diff`: Generate per-page diffs between different translation runs
+- `translation-review`: Review translation diffs and generate rationale for each page
+- `translation-finalize`: Produce a final unified translation per page
+
+### Running the Complete Pipeline
+
+Run all stages (transcription and translation):
 ```bash
 uv run python -m cli run <name>
 ```
 
 Run specific stages:
 ```bash
-uv run python -m cli run <name> --stages pdf transcription
+uv run python -m cli run <name> --stages pdf transcription transcription-diff transcription-review transcription-finalize translation translation-diff translation-review translation-finalize
+```
+
+Or just the translation pipeline (requires transcription to be present):
+```bash
+uv run python -m cli run <name> --stages translation translation-diff translation-review translation-finalize
 ```
 
 ### Transcription Options
@@ -86,10 +124,20 @@ Each project's `config.yaml` defines:
   - Number of runs
   - Maximum concurrent requests
   - OCR prompt path
-- Translation settings
+- Translation settings per model:
+  - Number of runs
+  - Model name
+
+## Pipeline Details
+
+- **Transcription pipeline**: Converts PDF to images, runs OCR, generates diffs, reviews, and finalizes a unified transcription per page.
+- **Translation pipeline**: Translates each reviewed transcription, generates diffs between translation runs, reviews, and finalizes a unified translation per page.
+- **Consensus handling**: If all models agree, the pipeline skips review/finalization and uses the consensus output directly.
+- **All outputs are organized by stage and model/run for full traceability.**
 
 ## Next Steps
 
 - Integrate cleaning functionality
-- Integrate actual translation, including previous values
+- Add support for additional languages or translation targets
+- Further improve review/finalization prompts and logic
 

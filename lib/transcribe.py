@@ -45,7 +45,7 @@ def write_run_metadata(output_dir: str | Path, run_name: str, model: str) -> Non
     logger.info(f"Run metadata written to {metadata_path}")
 
 # Function to write transcription to a markdown file
-def write_transcription(image_name: str, transcription: str, outpath_postfix: str = "", output_dir: str | Path = "output", model: str = "gpt-4.1"):
+def write_transcription(image_name: str, transcription: str, outpath_postfix: str = "", output_dir: str | Path = "transcription", model: str = "gpt-4.1"):
     """
     Write transcription to a markdown file in the specified output directory.
     
@@ -86,7 +86,7 @@ async def process_image(
     semaphore: asyncio.Semaphore,
     outpath_postfix: str = "",
     model: str = "gpt-4.1",
-    output_dir: str | Path = "output"
+    output_dir: str | Path = "transcription"
 ):
     async with semaphore:  # This ensures we only have max_concurrent requests at once
         start_time = time.time()
@@ -146,7 +146,7 @@ async def process_directory(
     end_index: int | None = None,
     outpath_postfix: str = "",
     model: str = "gpt-4.1",
-    output_dir: str | Path = "output"
+    output_dir: str | Path = "transcription"
 ):
     client = OpenAI(api_key=api_key)
     

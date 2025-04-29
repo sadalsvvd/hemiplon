@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import List
-from project import Project
+from lib.projects.project import Project
 from lib.pdf import convert_pdf_pages_to_images, split_spreads_to_pages
 
 class PDFProcessor:

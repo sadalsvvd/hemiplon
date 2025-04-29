@@ -38,8 +38,12 @@ class Project:
         return self.project_dir / "images"
     
     @property
-    def output_dir(self) -> Path:
-        return self.project_dir / "output"
+    def transcription_dir(self) -> Path:
+        return self.project_dir / "transcription"
+    
+    @property
+    def translation_dir(self) -> Path:
+        return self.project_dir / "translation"
     
     @property
     def config_path(self) -> Path:
@@ -49,7 +53,8 @@ class Project:
         """Create necessary project directories"""
         self.project_dir.mkdir(parents=True, exist_ok=True)
         self.images_dir.mkdir(exist_ok=True)
-        self.output_dir.mkdir(exist_ok=True)
+        self.transcription_dir.mkdir(exist_ok=True)
+        self.translation_dir.mkdir(exist_ok=True)
     
     def save_config(self) -> None:
         """Save project configuration to YAML file"""

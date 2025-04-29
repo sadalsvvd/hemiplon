@@ -8,7 +8,7 @@ class TranscriptionConfig:
     model: str
     runs: int = 1
     max_concurrent: int = 3
-    ocr_prompt_path: str = "prompts/transcribe.md"
+    ocr_prompt_path: str = "lib/prompts/transcribe.md"
 
 @dataclass
 class TranslationConfig:

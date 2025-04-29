@@ -4,14 +4,16 @@ import asyncio
 import os
 from dotenv import load_dotenv
 import yaml
+from pathlib import Path
+from openai import OpenAI
 
 from .project import Project
-from lib.transcribe import process_directory
-from utils.diff_checker import compare_multiple_folders
+from lib.transcribe import transcribe_image
+from lib.utils.diff_checker import compare_multiple_folders
+from lib.utils.pipeline_utils import log_and_filter_unprocessed, run_tasks_for_files
 from lib.pdf_processor import PDFProcessor
 from lib.llm_service import LLMService
 from lib.file_manager import FileManager
-from utils.pipeline_utils import get_unprocessed_files, log_and_filter_unprocessed, run_tasks_for_files
 
 # Configure logging
 logging.basicConfig(
@@ -43,21 +45,48 @@ class ProjectManager:
         self, start_index: int = 0, end_index: int | None = None
     ) -> None:
         # Runs the transcription stage for all configured models and runs. This is the first LLM-based step.
+        images_dir = self.project.images_dir
+        image_files = sorted([f for f in images_dir.glob('*') if f.suffix.lower() in ['.jpg', '.jpeg', '.png']])
+        if end_index is None:
+            end_index = len(image_files)
+        image_files = image_files[start_index:end_index]
+        logger.info(f"Found {len(image_files)} image files in {images_dir}")
+        logger.info(f"Processing images from index {start_index} to {end_index}")
         for config in self.project.transcription:
             for run in range(config.runs):
                 run_suffix = f"_{run + 1}" if config.runs > 1 else ""
+                output_dir = self.project.transcription_dir / f"transcribed_{config.model}{run_suffix}"
+                output_dir.mkdir(parents=True, exist_ok=True)
+                ocr_prompt_path = config.ocr_prompt_path
+                with open(ocr_prompt_path, "r") as file:
+                    ocr_prompt_contents = file.read()
+                to_process = log_and_filter_unprocessed(
+                    input_files=image_files,
+                    output_dir=output_dir,
+                    output_suffix="_transcribed.md",
+                    stage_name=f"Transcription{run_suffix} ({config.model})",
+                    logger=logger
+                )
+                if not to_process:
+                    continue
+                async def process_and_save(img_path):
+                    transcription = await transcribe_image(
+                        llm_service=self.llm_service,
+                        image_path=str(img_path),
+                        ocr_prompt=ocr_prompt_contents,
+                        model=config.model
+                    )
+                    output_path = output_dir / f"{Path(img_path).stem}_transcribed.md"
 
-                logger.info(f"Running transcription for {config.model} (run {run + 1})")
+                    with open(output_path, 'w') as f:
+                        f.write(transcription)
+                    logger.info(f"Transcription written to {output_path}")
 
-                await process_directory(
-                    directory_path=str(self.project.images_dir),
-                    ocr_prompt_path=config.ocr_prompt_path,
-                    max_concurrent=config.max_concurrent,
-                    start_index=start_index,
-                    end_index=end_index,
-                    outpath_postfix=f"_{config.model}{run_suffix}",
-                    model=config.model,
-                    output_dir=str(self.project.transcription_dir),
+                await run_tasks_for_files(
+                    to_process,
+                    process_and_save,
+                    logger=logger,
+                    stage_name=f"Transcription{run_suffix} ({config.model})"
                 )
 
     def _get_transcription_dirs(self, as_str=True):

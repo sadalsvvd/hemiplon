@@ -19,6 +19,7 @@ class TranslationConfig:
 class Project:
     name: str
     input_file: str
+    two_page_spread: bool = True  # Whether the input PDF is in two-page spread format
     transcription: List[TranscriptionConfig] = field(default_factory=list)
     translation: List[TranslationConfig] = field(default_factory=list)
     
@@ -50,6 +51,7 @@ class Project:
             "project": {
                 "name": self.name,
                 "input_file": self.input_file,
+                "two_page_spread": self.two_page_spread,
                 "transcription": [
                     {
                         "model": t.model,
@@ -86,6 +88,7 @@ class Project:
         return cls(
             name=project_name,
             input_file=project_config["input_file"],
+            two_page_spread=project_config.get("two_page_spread", True),
             transcription=[
                 TranscriptionConfig(**t) for t in project_config.get("transcription", [])
             ],
@@ -95,11 +98,12 @@ class Project:
         )
     
     @classmethod
-    def create(cls, name: str, input_file: str) -> 'Project':
+    def create(cls, name: str, input_file: str, two_page_spread: bool = True) -> 'Project':
         """Create a new project with default configuration"""
         project = cls(
             name=name,
             input_file=input_file,
+            two_page_spread=two_page_spread,
             transcription=[
                 TranscriptionConfig(model="gpt-4.1", runs=2, max_concurrent=3),
                 TranscriptionConfig(model="gpt-4.1-mini", runs=2, max_concurrent=3),

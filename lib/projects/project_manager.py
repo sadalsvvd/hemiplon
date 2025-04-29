@@ -27,11 +27,12 @@ assert api_key, "OPENAI_API_KEY is not set"
 
 class ProjectManager:
     def __init__(self, project: Project):
+        # The ProjectManager orchestrates the full pipeline for a single project instance.
         self.project = project
         self.llm_service = LLMService()
 
     async def process_pdf(self) -> None:
-        """Convert PDF to individual page images"""
+        # Converts the project's input PDF into individual page images for downstream processing.
         logger.info(f"Processing PDF for project {self.project.name}")
 
         processor = PDFProcessor(self.project)
@@ -41,13 +42,7 @@ class ProjectManager:
     async def run_transcription(
         self, start_index: int = 0, end_index: int | None = None
     ) -> None:
-        """
-        Run transcription for all configured models and runs.
-
-        Args:
-            start_index: Index of first image to process (inclusive)
-            end_index: Index of last image to process (exclusive). If None, process all remaining images.
-        """
+        # Runs the transcription stage for all configured models and runs. This is the first LLM-based step.
         for config in self.project.transcription:
             for run in range(config.runs):
                 run_suffix = f"_{run + 1}" if config.runs > 1 else ""
@@ -66,6 +61,7 @@ class ProjectManager:
                 )
 
     def _get_transcription_dirs(self, as_str=True):
+        # Returns all transcription run directories for this project. Used for diffing and review.
         dirs = []
         for config in self.project.transcription:
             for run in range(config.runs):
@@ -74,7 +70,7 @@ class ProjectManager:
         return dirs
 
     def generate_transcription_diffs(self) -> None:
-        """Generate diffs between different transcription runs and write each to its own file."""
+        # Compares all transcription runs and writes out diffs. This is the basis for review and consensus.
         transcription_dirs = self._get_transcription_dirs(as_str=True)
         labels = []
         for config in self.project.transcription:
@@ -87,6 +83,7 @@ class ProjectManager:
                         labels.append(metadata["name"])
                 else:
                     labels.append(dir_path.name)
+
         diffs = compare_multiple_folders(
             folders=transcription_dirs, labels=labels, file_pattern="*.md"
         )
@@ -104,18 +101,21 @@ class ProjectManager:
             logger.info(f"Wrote diff to {diff_path}")
 
     async def review_transcriptions(self) -> None:
-        """Review transcription differences and generate assessment for each diff file."""
+        # This stage uses LLMs to review the diffs between transcription runs, producing rationale for consensus.
         logger.info(f"Starting transcription review for project {self.project.name}")
         if not self.project.transcription_review:
             logger.warning("No transcription review configuration found")
             return
+
         diffs_dir = self.project.transcription_diffs_dir
         if not diffs_dir.exists():
             logger.error("No diffs directory found. Run generate_diffs first.")
             return
+
         reviewed_dir = self.project.transcription_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
         review_prompt = FileManager.read_text(self.project.get_prompt_path("transcription_review"))
+
         input_files = sorted(diffs_dir.glob("*_diff.md"))
         to_process = log_and_filter_unprocessed(
             input_files=input_files,
@@ -126,10 +126,12 @@ class ProjectManager:
         )
         if not to_process:
             return
+
         async def review_task(diff_file):
             diffs_content = FileManager.read_text(diff_file)
             for config in self.project.transcription_review:
                 await self._review_transcription_task(diff_file, config, review_prompt, diffs_content, reviewed_dir)
+
         await run_tasks_for_files(
             to_process,
             review_task,
@@ -138,6 +140,7 @@ class ProjectManager:
         )
 
     async def _review_transcription_task(self, diff_file, config, review_prompt, diffs_content, reviewed_dir):
+        # This is the core LLM call for reviewing a single diff file. Used by the review_transcriptions stage.
         async with self.llm_service.semaphore:
             logger.info(f"Reviewing {diff_file.name} with model {config.model}")
             try:
@@ -155,7 +158,7 @@ class ProjectManager:
                 raise
 
     async def finalize_transcriptions(self) -> None:
-        """Generate a final unified transcription for each page using all originals and the review rationale. If the review is 'Consensus.', just use the first available original."""
+        # This stage produces the final, unified transcription for each page, using the review rationale and all originals.
         logger.info(
             f"Starting transcription finalization for project {self.project.name}"
         )
@@ -163,9 +166,11 @@ class ProjectManager:
         if not reviewed_dir.exists():
             logger.error("No reviewed directory found. Run review_transcriptions first.")
             return
+
         transcription_dirs = self._get_transcription_dirs(as_str=False)
         final_dir = self.project.transcription_final_dir
         FileManager.ensure_dir(final_dir)
+
         input_files = sorted(reviewed_dir.glob("*_transcribed_reviewed.md"))
         to_process = log_and_filter_unprocessed(
             input_files=input_files,
@@ -176,8 +181,10 @@ class ProjectManager:
         )
         if not to_process:
             return
+
         async def finalize_task(review_file):
             await self._finalize_transcription_task(review_file, transcription_dirs, final_dir)
+
         await run_tasks_for_files(
             to_process,
             finalize_task,
@@ -186,6 +193,7 @@ class ProjectManager:
         )
 
     async def _finalize_transcription_task(self, review_file, transcription_dirs, final_dir):
+        # This is the core LLM call for producing a final transcription for a single page.
         page_id = review_file.name.replace("_transcribed_reviewed.md", "")
         originals = {}
         for tdir in transcription_dirs:
@@ -193,9 +201,11 @@ class ProjectManager:
             if candidates:
                 label = tdir.name
                 originals[label] = FileManager.read_text(candidates[0])
+
         if not originals:
             logger.warning(f"No originals found for {page_id}")
             return
+
         review_text = FileManager.read_text(review_file).strip()
         if review_text == "Consensus.":
             final_text = originals[next(iter(originals))]
@@ -216,31 +226,52 @@ class ProjectManager:
             except Exception as e:
                 logger.error(f"Error during finalization for {page_id}: {str(e)}")
                 return
+
         final_path = final_dir / f"{page_id}_final.md"
         FileManager.write_text(final_path, final_text)
         logger.info(f"Final transcription for {page_id} saved to {final_path}")
 
     async def run_translation(self) -> None:
-        """Run translation for all finalized transcriptions using configured models and runs. Supports previous_source_text for context."""
+        # This stage translates the finalized transcriptions using all configured models and runs.
         logger.info(f"Starting translation for project {self.project.name}")
         final_dir = self.project.transcription_final_dir
         if not final_dir.exists():
             logger.error("No finalized transcriptions found. Run finalize_transcriptions first.")
             return
+
         final_files = sorted(final_dir.glob("*_final.md"))
         page_ids = [f.stem.replace("_final", "") for f in final_files]
         page_id_to_file = {pid: f for pid, f in zip(page_ids, final_files)}
-        tasks = []
+
         for config in self.project.translation:
             for run in range(config.runs):
                 run_suffix = f"_{run+1}" if config.runs > 1 else ""
                 out_dir = self.project.translation_dir / f"translated_{config.model}{run_suffix}"
                 FileManager.ensure_dir(out_dir)
+
+                input_files = [page_id_to_file[pid] for pid in page_ids]
+                to_process_files = log_and_filter_unprocessed(
+                    input_files=input_files,
+                    output_dir=out_dir,
+                    output_suffix="_translated.md",
+                    stage_name=f"Translation{run_suffix} ({config.model})",
+                    logger=logger
+                )
+                to_process_ids = [f.stem.replace("_final", "") for f in to_process_files]
+                if not to_process_ids:
+                    continue
+
+                tasks = []
                 for idx, page_id in enumerate(page_ids):
-                    tasks.append(self._run_translation_task(config, page_id, idx, page_ids, page_id_to_file, out_dir))
-        await asyncio.gather(*tasks)
+                    if page_id in to_process_ids:
+                        tasks.append(self._run_translation_task(config, page_id, idx, page_ids, page_id_to_file, out_dir))
+
+                logger.info(f"Starting translation for {len(to_process_ids)} files for {config.model}{run_suffix}...")
+                await asyncio.gather(*tasks)
+        logger.info("Translation step complete.")
 
     async def _run_translation_task(self, config, page_id, idx, page_ids, page_id_to_file, out_dir):
+        # This is the core LLM call for translating a single finalized transcription.
         final_file = page_id_to_file[page_id]
         final_text = FileManager.read_text(final_file)
         previous_source_text = None
@@ -248,6 +279,7 @@ class ProjectManager:
             prev_page_id = page_ids[idx-1]
             prev_file = page_id_to_file[prev_page_id]
             previous_source_text = FileManager.read_text(prev_file)
+
         prompt = self.llm_service.render_prompt(
             str(self.project.get_prompt_path("translate")),
             {"source_text": final_text, "previous_source_text": previous_source_text}
@@ -266,6 +298,7 @@ class ProjectManager:
             return
 
     def _get_translation_dirs(self, as_str=True):
+        # Returns all translation run directories for this project. Used for diffing and review.
         dirs = []
         for config in self.project.translation:
             for run in range(config.runs):
@@ -274,7 +307,7 @@ class ProjectManager:
         return dirs
 
     def generate_translation_diffs(self) -> None:
-        """Generate diffs between different translation runs and write each to its own file."""
+        # Compares all translation runs and writes out diffs. This is the basis for translation review and consensus.
         logger.info(f"Generating translation diffs for project {self.project.name}")
         translation_dirs = self._get_translation_dirs(as_str=True)
         labels = []
@@ -288,6 +321,7 @@ class ProjectManager:
                         labels.append(metadata["name"])
                 else:
                     labels.append(dir_path.name)
+
         diffs = compare_multiple_folders(
             folders=translation_dirs, labels=labels, file_pattern="*.md"
         )
@@ -304,12 +338,13 @@ class ProjectManager:
             logger.info(f"Wrote translation diff to {diff_path}")
 
     async def review_translations(self) -> None:
-        """Review translation differences and generate assessment for each diff file using the translation_review.j2 template."""
+        # This stage uses LLMs to review the diffs between translation runs, producing rationale for consensus.
         logger.info(f"Starting translation review for project {self.project.name}")
         diffs_dir = self.project.translation_diffs_dir
         if not diffs_dir.exists():
             logger.error("No translation diffs directory found. Run generate_translation_diffs first.")
             return
+
         reviewed_dir = self.project.translation_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
         input_files = sorted(diffs_dir.glob("*_diff.md"))
@@ -322,6 +357,7 @@ class ProjectManager:
         )
         if not to_process:
             return
+
         async def review_task(diff_file):
             diffs_content = FileManager.read_text(diff_file)
             review_prompt = self.llm_service.render_prompt(
@@ -330,6 +366,7 @@ class ProjectManager:
             )
             for config in self.project.translation:
                 await self._review_translation_task(diff_file, config, review_prompt, reviewed_dir)
+
         await run_tasks_for_files(
             to_process,
             review_task,
@@ -338,6 +375,7 @@ class ProjectManager:
         )
 
     async def _review_translation_task(self, diff_file, config, review_prompt, reviewed_dir):
+        # This is the core LLM call for reviewing a single translation diff file. Used by the review_translations stage.
         async with self.llm_service.semaphore:
             logger.info(f"Reviewing translation {diff_file.name} with model {config.model}")
             try:
@@ -355,15 +393,17 @@ class ProjectManager:
                 return
 
     async def finalize_translations(self) -> None:
-        """Generate a final unified translation for each page using all originals and the review rationale. If the review is 'Consensus.', just use the first available translation, or fall back to the finalized transcription."""
+        # This stage produces the final, unified translation for each page, using the review rationale and all originals.
         logger.info(f"Starting translation finalization for project {self.project.name}")
         reviewed_dir = self.project.translation_reviewed_dir
         if not reviewed_dir.exists():
             logger.error("No reviewed translation directory found. Run review_translations first.")
             return
+
         translation_dirs = self._get_translation_dirs(as_str=False)
         final_dir = self.project.translation_final_dir
         FileManager.ensure_dir(final_dir)
+
         input_files = sorted(reviewed_dir.glob("*_reviewed.md"))
         to_process = log_and_filter_unprocessed(
             input_files=input_files,
@@ -374,8 +414,10 @@ class ProjectManager:
         )
         if not to_process:
             return
+
         async def finalize_task(review_file):
             await self._finalize_translation_task(review_file, translation_dirs, final_dir)
+
         await run_tasks_for_files(
             to_process,
             finalize_task,
@@ -384,6 +426,7 @@ class ProjectManager:
         )
 
     async def _finalize_translation_task(self, review_file, translation_dirs, final_dir):
+        # This is the core LLM call for producing a final translation for a single page.
         page_id = review_file.name.replace("_reviewed.md", "")
         originals = {}
         for tdir in translation_dirs:
@@ -391,6 +434,7 @@ class ProjectManager:
             if candidates:
                 label = tdir.name
                 originals[label] = FileManager.read_text(candidates[0])
+
         review_text = FileManager.read_text(review_file).strip()
         if review_text == "Consensus.":
             if originals:
@@ -420,6 +464,7 @@ class ProjectManager:
             except Exception as e:
                 logger.error(f"Error during translation finalization for {page_id}: {str(e)}")
                 return
+
         final_path = final_dir / f"{page_id}_final.md"
         FileManager.write_text(final_path, final_text)
         logger.info(f"Final translation for {page_id} saved to {final_path}")
@@ -430,15 +475,7 @@ class ProjectManager:
         start_index: int = 0,
         end_index: int | None = None,
     ) -> None:
-        """
-        Run the complete project pipeline or specific stages.
-        
-        Args:
-            stages: List of stages to run. If None, runs all stages.
-                   Valid stages: ['pdf', 'transcription', 'transcription-diff', 'transcription-review', 'transcription-finalize', 'translation', 'translation-diff', 'translation-review', 'translation-finalize']
-            start_index: For transcription stage, index of first image to process (inclusive)
-            end_index: For transcription stage, index of last image to process (exclusive)
-        """
+        # This is the main entry point for running the pipeline. It can run all or selected stages, and supports partial restarts.
         logger.info(f"Starting pipeline for project {self.project.name}")
         
         if stages is None:

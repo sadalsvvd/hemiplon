@@ -6,10 +6,6 @@ import logging
 from openai import OpenAI
 from pathlib import Path
 import time
-from typing import List, Dict
-import argparse
-import difflib
-import re
 import yaml
 
 # Configure logging
@@ -184,27 +180,3 @@ async def process_directory(
     
     # Process all images concurrently, with max_concurrent limit
     await asyncio.gather(*tasks)
-
-# Example usage
-if __name__ == "__main__":
-    # Set up argument parser
-    parser = argparse.ArgumentParser(description='Process images and generate transcriptions')
-    parser.add_argument('--directory', type=str, default="images/pages", help='Directory containing images')
-    parser.add_argument('--prompt', type=str, default="prompts/transcribe.md", help='Path to OCR prompt')
-    parser.add_argument('--start', type=int, default=0, help='Start processing from this index')
-    parser.add_argument('--end', type=int, default=10, help='Process up to this index (exclusive)')
-    parser.add_argument('--concurrent', type=int, default=3, help='Maximum number of concurrent requests')
-    parser.add_argument('--postfix', type=str, default="_gpt-4.1_high-detail", help='Optional postfix for output directory')
-    parser.add_argument('--model', type=str, default="gpt-4.1", help='OpenAI model to use for transcription')
-    
-    args = parser.parse_args()
-    
-    asyncio.run(process_directory(
-        args.directory,
-        args.prompt,
-        max_concurrent=args.concurrent,
-        start_index=args.start,
-        end_index=args.end,
-        outpath_postfix=args.postfix,
-        model=args.model
-    ))

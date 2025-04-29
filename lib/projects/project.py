@@ -16,12 +16,18 @@ class TranslationConfig:
     runs: int = 1
 
 @dataclass
+class TranscriptionReviewConfig:
+    model: str
+
+@dataclass
 class Project:
     name: str
     input_file: str
     two_page_spread: bool = True  # Whether the input PDF is in two-page spread format
     transcription: List[TranscriptionConfig] = field(default_factory=list)
     translation: List[TranslationConfig] = field(default_factory=list)
+    transcription_review: List[TranscriptionReviewConfig] = field(default_factory=list)
+    review_prompt_path: str = "prompts/review.md"
     
     @property
     def project_dir(self) -> Path:
@@ -64,7 +70,12 @@ class Project:
                 "translation": [
                     {"model": t.model, "runs": t.runs}
                     for t in self.translation
-                ]
+                ],
+                "transcription_review": [
+                    {"model": r.model}
+                    for r in self.transcription_review
+                ],
+                "review_prompt_path": self.review_prompt_path
             }
         }
         
@@ -94,7 +105,11 @@ class Project:
             ],
             translation=[
                 TranslationConfig(**t) for t in project_config.get("translation", [])
-            ]
+            ],
+            transcription_review=[
+                TranscriptionReviewConfig(**r) for r in project_config.get("transcription_review", [])
+            ],
+            review_prompt_path=project_config.get("review_prompt_path", "prompts/review.md")
         )
     
     @classmethod
@@ -110,6 +125,9 @@ class Project:
             ],
             translation=[
                 TranslationConfig(model="gpt-4.1", runs=2),
+            ],
+            transcription_review=[
+                TranscriptionReviewConfig(model="gpt-4.1"),
             ]
         )
         

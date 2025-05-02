@@ -73,6 +73,11 @@ def main():
         default=None,
         help="Slug used in forming file paths for the manifest (default: project name)"
     )
+    manifest_parser.add_argument(
+        "--title", 
+        default=None,
+        help="Title of the text (default: project name)"
+    )
 
     args = parser.parse_args()
 
@@ -110,10 +115,7 @@ def main():
         
         # Set default text_slug if not specified
         text_slug = args.text_slug if args.text_slug is not None else args.name
-        
-        # Set default output path if not specified
-        output_path = os.path.join(project.project_dir, "output")
-        
+
         # Construct base directory path
         base_dir = os.path.join(project.project_dir)
         os.makedirs(base_dir, exist_ok=True)
@@ -121,14 +123,19 @@ def main():
         if not os.path.exists(base_dir):
             print(f"Error: Base directory {base_dir} does not exist.")
             return
+        
+        if args.title is None:
+            title = args.name
+        else:
+            title = args.title
             
         # Generate the manifest
         generate_ccag_manifest(
             base_dir=base_dir,
             text_file_base=args.text_file_base,
-            text_slug=text_slug
+            text_slug=text_slug,
+            text_name=title
         )
-        print(f"Generated manifest for project {args.name} at {output_path}")
 
     else:
         parser.print_help()

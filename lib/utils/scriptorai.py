@@ -11,8 +11,9 @@ from typing import List, Dict, Any, Optional
 
 def generate_ccag_manifest(
     base_dir: str, 
-    text_file_base: str = "CCAG01", 
-    text_slug: str = "ccag-01"
+    text_file_base: str, 
+    text_slug: str,
+    text_name: str = "Untitled"
 ) -> None:
     """
     Generate a manifest JSON file mapping page IDs to their respective image, 
@@ -100,21 +101,22 @@ def generate_ccag_manifest(
             # Add entry to manifest -- text_slug is included, assuming that the folder will
             # be put into the Scriptorai static folder
             pages.append({
-                "pageId": page_id,
-                "image": f"/{text_slug}/images/{img}",
-                "translation": f"/{text_slug}/translation/{translation}",
-                "transcription": f"/{text_slug}/transcription/{transcription}",
+                "page_id": page_id,
+                "image_path": f"images/{img}",
+                "translation_path": f"translation/{translation}",
+                "transcription_path": f"transcription/{transcription}",
             })
         else:
             print(f"No translation or transcription found for page ID: {page_id}")
             print(f"Translation: {translation}")
             print(f"Transcription: {transcription}")
 
-    pages = sorted(pages, key=lambda x: int(x["pageId"]))
+    pages = sorted(pages, key=lambda x: int(x["page_id"]))
     
     # Create the manifest structure with text_slug at the top level and pages in a nested array
     manifest = {
         "text_slug": text_slug,
+        "text_name": text_name,
         "pages": pages
     }
     

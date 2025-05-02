@@ -49,11 +49,68 @@ async def run_tasks_for_files(
     *args,
     logger=None,
     stage_name=None,
+    max_concurrency=None,
     **kwargs
 ):
+    """
+    Run tasks for a list of files with optional concurrency limiting.
+    
+    Args:
+        files: List of files to process
+        process_fn: Async function to call for each file
+        max_concurrency: Maximum number of tasks to run concurrently (None for unlimited)
+        logger: Logger to use
+        stage_name: Name of stage for logging
+    """
     if logger and stage_name:
         logger.info(f"{stage_name}: Starting processing for {len(files)} files...")
+    
+    if not files:
+        if logger:
+            logger.info(f"{stage_name}: No files to process.")
+        return
+    
+    # Create all tasks
     tasks = [process_fn(file, *args, **kwargs) for file in files]
-    await asyncio.gather(*tasks)
+    
+    if max_concurrency:
+        # Process in batches if max_concurrency is specified
+        if logger:
+            logger.info(f"{stage_name}: Using concurrency limit of {max_concurrency}")
+        
+        results = []
+        for i in range(0, len(tasks), max_concurrency):
+            batch = tasks[i:i + max_concurrency]
+            if logger:
+                logger.info(f"{stage_name}: Processing batch {i//max_concurrency + 1} ({len(batch)} tasks)")
+            batch_results = await asyncio.gather(*batch, return_exceptions=True)
+            
+            # Log any exceptions from the batch
+            for idx, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    file_idx = i + idx
+                    if file_idx < len(files):
+                        file_info = f"{files[file_idx]}" if file_idx < len(files) else f"task {file_idx}"
+                        if logger:
+                            logger.error(f"{stage_name}: Task for {file_info} failed with {type(result).__name__}: {result}")
+            
+            results.extend(batch_results)
+    else:
+        # Process all tasks at once if no concurrency limit
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Log any exceptions
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                file_info = f"{files[idx]}" if idx < len(files) else f"task {idx}"
+                if logger:
+                    logger.error(f"{stage_name}: Task for {file_info} failed with {type(result).__name__}: {result}")
+    
+    # Count successes and failures
+    successes = sum(1 for r in results if not isinstance(r, Exception))
+    failures = sum(1 for r in results if isinstance(r, Exception))
+    
     if logger and stage_name:
-        logger.info(f"{stage_name}: Step complete.") 
+        logger.info(f"{stage_name}: Processing complete. Successes: {successes}, Failures: {failures}")
+    
+    return results 

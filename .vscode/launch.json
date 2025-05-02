@@ -9,7 +9,7 @@
           "run",
           "CCAG_1_smol",
           "--stages",
-          "transcription-diff"
+          "transcription-review"
       ],
       "console": "integratedTerminal",
       "justMyCode": false,

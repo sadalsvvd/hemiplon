@@ -1,6 +1,5 @@
-import logging
+from lib.logger import logger
 from typing import List, Optional
-import asyncio
 import os
 from dotenv import load_dotenv
 import yaml
@@ -15,12 +14,6 @@ from lib.utils.pipeline_utils import log_and_filter_unprocessed, run_tasks_for_f
 from lib.pdf_processor import PDFProcessor
 from lib.llm_service import LLMService
 from lib.file_manager import FileManager
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -100,7 +93,8 @@ class ProjectManager:
                     to_process,
                     process_and_save,
                     logger=logger,
-                    stage_name=f"{log_prefix}"
+                    stage_name=f"{log_prefix}",
+                    max_concurrency=5  # Limit concurrent tasks for transcription
                 )
                 logger.info(f"{log_prefix} Transcription stage complete.")
 
@@ -206,27 +200,28 @@ class ProjectManager:
             to_process,
             review_task,
             logger=logger,
-            stage_name=log_prefix
+            stage_name=f"{log_prefix}",
+            max_concurrency=5  # Limit concurrent tasks for finalization
         )
         logger.info(f"{log_prefix} Transcription review stage complete.")
 
     async def _review_transcription_task(self, diff_file, config, review_prompt, diffs_content, reviewed_dir):
         # This is the core LLM call for reviewing a single diff file. Used by the review_transcriptions stage.
-        async with self.llm_service.semaphore:
-            logger.info(f"Reviewing {diff_file.name} with model {config.model}")
-            try:
-                review_text = await self.llm_service.chat(
-                    model=config.model,
-                    messages=[{"role": "system", "content": review_prompt}, {"role": "user", "content": diffs_content}],
-                )
-                assert review_text is not None, "Review text is None"
-                base_name = diff_file.name.replace("_diff.md", "_transcribed_reviewed.md")
-                review_path = reviewed_dir / base_name
-                FileManager.write_text(review_path, review_text)
-                logger.info(f"Review for {diff_file.name} saved to {review_path}")
-            except Exception as e:
-                logger.error(f"Error during review of {diff_file.name} with {config.model}: {str(e)}")
-                raise
+        logger.info(f"Reviewing {diff_file.name} with model {config.model}")
+        try:
+            review_text = await self.llm_service.chat(
+                model=config.model,
+                messages=[{"role": "system", "content": review_prompt}, {"role": "user", "content": diffs_content}],
+                request_name=f"review_transcription_{diff_file.name}"
+            )
+            assert review_text is not None, "Review text is None"
+            base_name = diff_file.name.replace("_diff.md", "_transcribed_reviewed.md")
+            review_path = reviewed_dir / base_name
+            FileManager.write_text(review_path, review_text)
+            logger.info(f"Review for {diff_file.name} saved to {review_path}")
+        except Exception as e:
+            logger.error(f"Error during review of {diff_file.name} with {config.model}: {str(e)}")
+            raise
 
     async def finalize_transcriptions(self) -> None:
         # This stage produces the final, unified transcription for each page, using the review rationale and all originals.
@@ -269,7 +264,8 @@ class ProjectManager:
             to_process,
             finalize_task,
             logger=logger,
-            stage_name=log_prefix
+            stage_name=f"{log_prefix}",
+            max_concurrency=5  # Limit concurrent tasks for finalization
         )
         logger.info(f"{log_prefix} Transcription finalization stage complete.")
 
@@ -302,6 +298,7 @@ class ProjectManager:
                 final_text = await self.llm_service.chat(
                     model=config.model,
                     messages=[{"role": "user", "content": prompt}],
+                    request_name=f"finalize_transcription_{page_id}"
                 )
                 assert final_text is not None, "Final text is None"
             except Exception as e:
@@ -349,18 +346,41 @@ class ProjectManager:
                         idx = page_ids.index(page_id)
                         final_file = page_id_to_file[page_id]
                         final_text = FileManager.read_text(final_file)
-                        previous_source_text = None
+                        
+                        # Handle previous page text with limit
+                        source_text_previous_page = None
                         if idx > 0:
                             prev_page_id = page_ids[idx-1]
                             prev_file = page_id_to_file[prev_page_id]
-                            previous_source_text = FileManager.read_text(prev_file)
+                            prev_text = FileManager.read_text(prev_file)
+                            if len(prev_text) > 200:
+                                source_text_previous_page = "..." + prev_text[-200:]
+                            else:
+                                source_text_previous_page = prev_text
+                        
+                        # Handle next page text with limit
+                        source_text_next_page = None
+                        if idx < len(page_ids) - 1:
+                            next_page_id = page_ids[idx+1]
+                            next_file = page_id_to_file[next_page_id]
+                            next_text = FileManager.read_text(next_file)
+                            if len(next_text) > 200:
+                                source_text_next_page = next_text[:200] + "..."
+                            else:
+                                source_text_next_page = next_text
+                        
                         prompt = self.llm_service.render_prompt(
                             str(self.project.get_prompt_path("translate")),
-                            {"source_text": final_text, "previous_source_text": previous_source_text}
+                            {
+                                "source_text": final_text,
+                                "source_text_previous_page": source_text_previous_page,
+                                "source_text_next_page": source_text_next_page
+                            }
                         )
                         translation = await self.llm_service.chat(
                             model=config.model,
                             messages=[{"role": "user", "content": prompt}],
+                            request_name=f"translate_{page_id}"
                         )
                         assert translation is not None, "Translation is None"
                         out_path = out_dir / f"{page_id}_translated.md"
@@ -373,7 +393,8 @@ class ProjectManager:
                     to_process_ids,
                     process_and_save,
                     logger=logger,
-                    stage_name=f"{log_prefix}"
+                    stage_name=f"{log_prefix}",
+                    max_concurrency=5  # Limit concurrent tasks for translation
                 )
                 logger.info(f"{log_prefix} Translation stage complete.")
         logger.info(self._log_prefix("Translation", None) + " Translation step complete.")
@@ -474,27 +495,28 @@ class ProjectManager:
             to_process,
             review_task,
             logger=logger,
-            stage_name=log_prefix
+            stage_name=f"{log_prefix}",
+            max_concurrency=5  # Limit concurrent tasks for finalization
         )
         logger.info(f"{log_prefix} Translation review stage complete.")
 
     async def _review_translation_task(self, diff_file, config, review_prompt, reviewed_dir):
         # This is the core LLM call for reviewing a single translation diff file. Used by the review_translations stage.
-        async with self.llm_service.semaphore:
-            logger.info(f"Reviewing translation {diff_file.name} with model {config.model}")
-            try:
-                review_text = await self.llm_service.chat(
-                    model=config.model,
-                    messages=[{"role": "system", "content": review_prompt}],
-                )
-                assert review_text is not None, "Review text is None"
-                base_name = diff_file.name.replace("_diff.md", "_reviewed.md")
-                review_path = reviewed_dir / base_name
-                FileManager.write_text(review_path, review_text)
-                logger.info(f"Translation review for {diff_file.name} saved to {review_path}")
-            except Exception as e:
-                logger.error(f"Error during translation review of {diff_file.name} with {config.model}: {str(e)}")
-                return
+        logger.info(f"Reviewing translation {diff_file.name} with model {config.model}")
+        try:
+            review_text = await self.llm_service.chat(
+                model=config.model,
+                messages=[{"role": "system", "content": review_prompt}],
+                request_name=f"review_translation_{diff_file.name}"
+            )
+            assert review_text is not None, "Review text is None"
+            base_name = diff_file.name.replace("_diff.md", "_reviewed.md")
+            review_path = reviewed_dir / base_name
+            FileManager.write_text(review_path, review_text)
+            logger.info(f"Translation review for {diff_file.name} saved to {review_path}")
+        except Exception as e:
+            logger.error(f"Error during translation review of {diff_file.name} with {config.model}: {str(e)}")
+            raise
 
     async def finalize_translations(self) -> None:
         # This stage produces the final, unified translation for each page, using the review rationale and all originals.
@@ -537,7 +559,8 @@ class ProjectManager:
             to_process,
             finalize_task,
             logger=logger,
-            stage_name=log_prefix
+            stage_name=f"{log_prefix}",
+            max_concurrency=5  # Limit concurrent tasks for finalization
         )
         logger.info(f"{log_prefix} Translation finalization stage complete.")
 
@@ -575,6 +598,7 @@ class ProjectManager:
                 final_text = await self.llm_service.chat(
                     model=config.model,
                     messages=[{"role": "user", "content": prompt}],
+                    request_name=f"finalize_translation_{page_id}"
                 )
                 assert final_text is not None, "Final translation is None"
             except Exception as e:

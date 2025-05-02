@@ -16,6 +16,12 @@ STAGE_ORDER = [
     "translation-finalize",
 ]
 
+# Create a dedicated coroutine for running the pipeline
+async def run_pipeline_main(project, stages=None, start_index=0, end_index=None):
+    # Create ProjectManager inside the coroutine to ensure semaphore is in the correct event loop
+    manager = ProjectManager(project)
+    await manager.run_pipeline(stages=stages, start_index=start_index, end_index=end_index)
+
 def main():
     parser = argparse.ArgumentParser(description="Manage transcription projects")
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
@@ -68,12 +74,17 @@ def main():
             stages = STAGE_ORDER[idx:]
         else:
             stages = None
-        # Load and run project
+        
+        # Load project
         project = load_project(args.name)
-        manager = ProjectManager(project)
+        
+        # Run the pipeline in a dedicated coroutine
         asyncio.run(
-            manager.run_pipeline(
-                stages=stages, start_index=args.start, end_index=args.end
+            run_pipeline_main(
+                project=project,
+                stages=stages, 
+                start_index=args.start, 
+                end_index=args.end
             )
         )
 

@@ -125,6 +125,12 @@ def generate_ccag_manifest(
     with open(manifest_path, 'w') as f:
         json.dump(manifest, f, indent=2)
     
+    # Write the README.md to the output directory
+    readme_path = output_dir / "README.md"
+    readme_content = f"# {text_name}\n\nThis is the README for this text, which will be rendered on Scriptorai on the top-level page for the text. Update me!\n"
+    with open(readme_path, 'w') as f:
+        f.write(readme_content)
+    
     print(f"Wrote manifest for {len(pages)} pages with text_slug '{text_slug}'.")
     print(f"Copied files: {copied_files['images']} images, {copied_files['translation']} translations, {copied_files['transcription']} transcriptions.")
 

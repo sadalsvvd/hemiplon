@@ -141,3 +141,12 @@ Each project's `config.yaml` defines:
 - Add support for additional languages or translation targets
 - Further improve review/finalization prompts and logic
 
+# Producing a Git repository with a text
+
+If you have a properly prepared PDF (currently only working on CCAG-style input PDFs, more to come), you can run the full pipeline like so:
+
+1. `uv run python -m cli run <project name>` - runs all stages and pipelines from PDF to finish
+2. `uv run python -m cli manifest <project name> --text-file-base <file base>` - builds a manifest from that file.
+  - `<file base>` is the prefix for files inside the output folders. For instance, if you have a bunch of `CCAG01_page_####_final.md` files in your `output/transcription` and `output/translation` folders, your text file base is `CCAG01`. This MUST be correct in order to make sure that the manifest refers to the correct files.
+3. Create a GitHub project and local .git repo
+4. Copy the contents of `output` to the new git repo and push to GitHub

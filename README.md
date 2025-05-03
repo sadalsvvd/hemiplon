@@ -1,5 +1,7 @@
 # hemiplon
 
+THIS README IS AI-GENERATED AND NEEDS REVIEW. This tool is not really ready for general usage on anything except other CCAG texts.
+
 Dependencies:
 
 - `brew install pkg-config poppler`

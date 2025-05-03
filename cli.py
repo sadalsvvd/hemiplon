@@ -4,6 +4,7 @@ import os
 
 from lib.projects.project_manager import create_project, load_project, ProjectManager
 from lib.utils.scriptorai import generate_ccag_manifest
+from lib.utils.indexer import generate_lunr_index
 
 # Canonical stage order
 STAGE_ORDER = [
@@ -79,6 +80,15 @@ def main():
         help="Title of the text (default: project name)"
     )
 
+    # Index command
+    index_parser = subparsers.add_parser("index", help="Generate a Lunr.js-compatible search index for a project")
+    index_parser.add_argument("project_name", help="Project name to index")
+    index_parser.add_argument(
+        "--output",
+        default="static/lunr_index.json",
+        help="Output path for the index JSON (default: static/lunr_index.json)"
+    )
+
     args = parser.parse_args()
 
     if args.command == "create":
@@ -136,6 +146,13 @@ def main():
             text_slug=text_slug,
             text_name=title
         )
+
+    elif args.command == "index":
+        try:
+            generate_lunr_index(args.project_name, output_path=args.output)
+            print(f"Lunr.js index for project '{args.project_name}' generated at {args.output}")
+        except FileNotFoundError as e:
+            print(str(e))
 
     else:
         parser.print_help()

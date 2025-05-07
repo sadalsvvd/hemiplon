@@ -328,12 +328,14 @@ class ProjectManager:
             logger.error(self._log_prefix("Translation", None) + " No finalized transcriptions found. Run finalize_transcriptions first.")
             return
 
-        final_files = sorted(final_dir.glob("*_final.md"))
-        final_files = self._slice_files(final_files, start_index, end_index)
-        logger.info(f"Processing {len(final_files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
-        
-        page_ids = [f.stem.replace("_final", "") for f in final_files]
-        page_id_to_file = {pid: f for pid, f in zip(page_ids, final_files)}
+        # Get files from final transcription stage
+        file_set = self.project.get_files_for_stage(
+            stage="transcription-final",
+            start_index=start_index,
+            end_index=end_index,
+            include_adjacent_pages=True  # Include previous/next pages for context
+        )
+        logger.info(f"Processing {len(file_set.files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
 
         for config in self.project.translation:
             for run in range(config.runs):
@@ -341,9 +343,9 @@ class ProjectManager:
                 out_dir = self.project.translation_dir / f"translated_{config.model}{run_suffix}"
                 FileManager.ensure_dir(out_dir)
                 log_prefix = self._log_prefix("Translation", config.model, run + 1)
-                input_files = [page_id_to_file[pid] for pid in page_ids]
+                
                 to_process_files = log_and_filter_unprocessed(
-                    input_files=input_files,
+                    input_files=file_set.files,
                     output_dir=out_dir,
                     output_suffix="_translated.md",
                     stage_name=f"{log_prefix}",
@@ -357,38 +359,37 @@ class ProjectManager:
                 async def process_and_save(page_id):
                     logger.info(f"{log_prefix} Starting file: {page_id}")
                     try:
-                        idx = page_ids.index(page_id)
-                        final_file = page_id_to_file[page_id]
+                        final_file = file_set.page_id_to_file[page_id]
                         final_text = FileManager.read_text(final_file)
                         
-                        # Handle previous page text with limit
-                        source_text_previous_page = None
-                        if idx > 0:
-                            prev_page_id = page_ids[idx-1]
-                            prev_file = page_id_to_file[prev_page_id]
-                            prev_text = FileManager.read_text(prev_file)
-                            if len(prev_text) > 200:
-                                source_text_previous_page = "..." + prev_text[-200:]
-                            else:
-                                source_text_previous_page = prev_text
+                        # Get adjacent page texts
+                        previous_page_source_text = None
+                        next_page_source_text = None
                         
-                        # Handle next page text with limit
-                        source_text_next_page = None
-                        if idx < len(page_ids) - 1:
-                            next_page_id = page_ids[idx+1]
-                            next_file = page_id_to_file[next_page_id]
-                            next_text = FileManager.read_text(next_file)
-                            if len(next_text) > 200:
-                                source_text_next_page = next_text[:200] + "..."
-                            else:
-                                source_text_next_page = next_text
+                        if page_id in file_set.page_ids and page_id in file_set.metadata["adjacent_files"]:
+                            idx = file_set.page_ids.index(page_id)
+                            adj_files = file_set.metadata["adjacent_files"]
+                            
+                            # Get previous page if it exists
+                            if idx > 0:
+                                prev_id = file_set.page_ids[idx-1]
+                                if prev_id in adj_files:
+                                    prev_text = FileManager.read_text(adj_files[prev_id])
+                                    previous_page_source_text = "..." + prev_text[-200:] if len(prev_text) > 200 else prev_text
+                            
+                            # Get next page if it exists
+                            if idx < len(file_set.page_ids) - 1:
+                                next_id = file_set.page_ids[idx+1]
+                                if next_id in adj_files:
+                                    next_text = FileManager.read_text(adj_files[next_id])
+                                    next_page_source_text = next_text[:200] + "..." if len(next_text) > 200 else next_text
                         
                         prompt = self.llm_service.render_prompt(
                             str(self.project.get_prompt_path("translate")),
                             {
                                 "source_text": final_text,
-                                "source_text_previous_page": source_text_previous_page,
-                                "source_text_next_page": source_text_next_page
+                                "previous_page_source_text": previous_page_source_text,
+                                "next_page_source_text": next_page_source_text
                             }
                         )
                         translation = await self.llm_service.chat(

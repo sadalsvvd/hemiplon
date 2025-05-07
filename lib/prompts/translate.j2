@@ -11,10 +11,10 @@ RULES:
   - If they are provided and a sentence flows into the current source text page or the end of the current page flows onto the next, make sure to interpret the current page's text appropriately so the next page still reads correctly.
   - NOTE: There may be title headings and page numbers before partial sentences. Make sure to intelligently interpret the context of the partial sentence and translate it appropriately.
 
-{% if source_text_previous_page %}# Source text previous page
+{% if previous_page_source_text %}# Source text previous page
 
 ```
-{{ source_text_previous_page }}
+{{ previous_page_source_text }}
 ```
 {% endif %}
 

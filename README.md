@@ -142,6 +142,9 @@ Each project's `config.yaml` defines:
 - Integrate cleaning functionality
 - Add support for additional languages or translation targets
 - Further improve review/finalization prompts and logic
+- Improve cross-page sentences, either by:
+  - Handling dependencies between calls in combination with the semaphore so we can run multiple at once but only if we have pages (does this force us to be serial anyway?)
+  - Use fast model to detect page endings and have a final "repair page interrupted sentences" stage or similar which looks at the attempted translation, the source text, and attempts to provide a cohesive overall edit
 
 # Producing a Git repository with a text
 

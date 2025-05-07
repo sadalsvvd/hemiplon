@@ -2,6 +2,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict, Any
 from pathlib import Path
 import yaml
+import re
 
 @dataclass
 class FileSet:
@@ -221,6 +222,21 @@ class Project:
         else:
             raise ValueError(f"Unknown stage: {stage}")
 
+    @staticmethod
+    def extract_page_id(filename: str, project_key: str) -> str:
+        """
+        Extracts the page id (e.g. CCAG02_page_0005) from a filename using the project key.
+        """
+        # Remove extension if present
+        base = filename
+        if base.endswith('.md') or base.endswith('.jpg'):
+            base = base[:-3]
+        # Regex: match {project_key}_page_XXXX
+        match = re.search(rf'({re.escape(project_key)}_page_\d+)', base)
+        if match:
+            return match.group(1)
+        raise ValueError(f'Could not extract page id from {filename} with project key {project_key}')
+
     def get_files_for_stage(
         self,
         stage: str,
@@ -228,7 +244,6 @@ class Project:
         model: str | None = None,
         start_index: int = 0,
         end_index: int | None = None,
-
         include_adjacent_pages: bool = False,
         adjacent_page_context: int = 1
     ) -> FileSet:
@@ -260,12 +275,11 @@ class Project:
         if end_index is None:
             end_index = len(files)
         files = files[start_index:end_index]
-        
-        # Extract page IDs and create mapping
-        page_ids = [f.stem.split('_')[0] for f in files]
+
+        # Use extract_page_id for all page id extraction
+        page_ids = [self.extract_page_id(f.name, self.name) for f in files]
         page_id_to_file = {pid: f for pid, f in zip(page_ids, files)}
-        
-        # Get metadata from run.yaml if it exists
+
         metadata = {}
         run_yaml = base_dir / "run.yaml"
         if run_yaml.exists():
@@ -276,9 +290,9 @@ class Project:
         adjacent_files = {}
         if include_adjacent_pages:
             all_files = sorted(base_dir.glob("*.md"))
-            all_page_ids = [f.stem.split('_')[0] for f in all_files]
+            all_page_ids = [self.extract_page_id(f.name, self.name) for f in all_files]
             all_page_id_to_file = {pid: f for pid, f in zip(all_page_ids, all_files)}
-            
+
             for pid in page_ids:
                 idx = all_page_ids.index(pid)
                 start_idx = max(0, idx - adjacent_page_context)

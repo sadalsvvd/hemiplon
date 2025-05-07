@@ -17,18 +17,20 @@ class PDFProcessor:
         if not pdf_path.exists():
             raise FileNotFoundError(f"PDF file not found: {pdf_path}")
         
-        # Convert PDF to images
+        # Convert PDF to images, using project.name as prefix
         spread_images = convert_pdf_pages_to_images(
             str(pdf_path),
             page_range=(1, None),  # Process all pages
-            output_dir=str(self.spreads_dir)
+            output_dir=str(self.spreads_dir),
+            project_name=self.project.name
         )
         
         if self.project.two_page_spread:
-            # Split spreads into individual pages
+            # Split spreads into individual pages, using project.name as prefix
             page_images = split_spreads_to_pages(
                 spread_images,
-                output_dir=str(self.images_dir)
+                output_dir=str(self.images_dir),
+                project_name=self.project.name
             )
             return [Path(img) for img in page_images]
         else:

@@ -329,13 +329,13 @@ class ProjectManager:
             return
 
         # Get files from final transcription stage
-        file_set = self.project.get_files_for_stage(
+        transcribed_file_set = self.project.get_files_for_stage(
             stage="transcription-final",
             start_index=start_index,
             end_index=end_index,
             include_adjacent_pages=True  # Include previous/next pages for context
         )
-        logger.info(f"Processing {len(file_set.files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
+        logger.info(f"Processing {len(transcribed_file_set.files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
 
         for config in self.project.translation:
             for run in range(config.runs):
@@ -345,7 +345,7 @@ class ProjectManager:
                 log_prefix = self._log_prefix("Translation", config.model, run + 1)
                 
                 to_process_files = log_and_filter_unprocessed(
-                    input_files=file_set.files,
+                    input_files=transcribed_file_set.files,
                     output_dir=out_dir,
                     output_suffix="_translated.md",
                     stage_name=f"{log_prefix}",
@@ -359,27 +359,27 @@ class ProjectManager:
                 async def process_and_save(page_id):
                     logger.info(f"{log_prefix} Starting file: {page_id}")
                     try:
-                        final_file = file_set.page_id_to_file[page_id]
+                        final_file = transcribed_file_set.page_id_to_file[page_id]
                         final_text = FileManager.read_text(final_file)
                         
                         # Get adjacent page texts
                         previous_page_source_text = None
                         next_page_source_text = None
                         
-                        if page_id in file_set.page_ids and page_id in file_set.metadata["adjacent_files"]:
-                            idx = file_set.page_ids.index(page_id)
-                            adj_files = file_set.metadata["adjacent_files"]
+                        if page_id in transcribed_file_set.page_ids and page_id in transcribed_file_set.metadata["adjacent_files"]:
+                            idx = transcribed_file_set.page_ids.index(page_id)
+                            adj_files = transcribed_file_set.metadata["adjacent_files"]
                             
                             # Get previous page if it exists
                             if idx > 0:
-                                prev_id = file_set.page_ids[idx-1]
+                                prev_id = transcribed_file_set.page_ids[idx-1]
                                 if prev_id in adj_files:
                                     prev_text = FileManager.read_text(adj_files[prev_id])
                                     previous_page_source_text = "..." + prev_text[-200:] if len(prev_text) > 200 else prev_text
                             
                             # Get next page if it exists
-                            if idx < len(file_set.page_ids) - 1:
-                                next_id = file_set.page_ids[idx+1]
+                            if idx < len(transcribed_file_set.page_ids) - 1:
+                                next_id = transcribed_file_set.page_ids[idx+1]
                                 if next_id in adj_files:
                                     next_text = FileManager.read_text(adj_files[next_id])
                                     next_page_source_text = next_text[:200] + "..." if len(next_text) > 200 else next_text
@@ -403,7 +403,9 @@ class ProjectManager:
                         preview = textwrap.shorten(translation.replace('\n', ' '), width=80, placeholder='...')
                         logger.info(f"{log_prefix} Finished file: {page_id} -> {out_path} | Preview: {preview}")
                     except Exception as e:
+                        logger.error(e)
                         logger.error(f"{log_prefix} Error processing {page_id}: {e}")
+
                 await run_tasks_for_files(
                     to_process_ids,
                     process_and_save,

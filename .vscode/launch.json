@@ -7,9 +7,13 @@
       "module": "cli",
       "args": [
           "run",
-          "CCAG_1_smol",
+          "CCAG_2",
           "--stages",
-          "transcription-review"
+          "translation",
+          "--start",
+          "5",
+          "--end",
+          "7"
       ],
       "console": "integratedTerminal",
       "justMyCode": false,

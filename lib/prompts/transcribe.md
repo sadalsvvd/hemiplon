@@ -11,5 +11,6 @@ You MUST obey the following rules:
 - Do NOT include code block backticks, ONLY return the text.
 - If the image is blank or has no renderable text, output: "(No text detected in image.)"
 - Remember, this text is Ancient Greek, so when in doubt, assume the Ancient Greek form of a word is used.
+- YOU MUST TRANSLATE *ALL* TEXT PRESENT.
 
 RETURN NO OTHER TEXT BUT THE REQUESTED CONTENT.

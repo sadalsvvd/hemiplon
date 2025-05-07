@@ -25,21 +25,21 @@ def read_pdf(file_path):
     return pdf_reader
 
 
-def convert_pdf_pages_to_images(pdf_path, page_range=None, output_dir=None):
+def convert_pdf_pages_to_images(pdf_path, page_range=None, output_dir=None, project_name=None):
     """
     Convert PDF pages to images and save them in the specified output directory.
-    The output image files will be prefixed with the PDF filename (sans .pdf).
-    
+    The output image files will be prefixed with the project_name.
     Args:
         pdf_path: Path to the PDF file
         page_range: Optional tuple of (start_page, end_page)
         output_dir: Optional output directory. If None, raises ValueError
+        project_name: The canonical project key/name to use as prefix
     """
     logging.info(
         f"Converting PDF pages from {pdf_path} to images, page_range={page_range}"
     )
-    pdf_filename = os.path.splitext(os.path.basename(pdf_path))[0]
-
+    if project_name is None:
+        raise ValueError("project_name must be specified")
     if output_dir is None:
         raise ValueError("output_dir must be specified")
     
@@ -64,7 +64,7 @@ def convert_pdf_pages_to_images(pdf_path, page_range=None, output_dir=None):
     converted_images = []
     for idx, img in enumerate(pages):
         page_num = idx + page_offset
-        out_path = output_dir / f"{pdf_filename}_spread_{page_num:04d}.jpg"
+        out_path = output_dir / f"{project_name}_spread_{page_num:04d}.jpg"
         img.save(str(out_path), "JPEG")
         converted_images.append(str(out_path))
 
@@ -72,7 +72,7 @@ def convert_pdf_pages_to_images(pdf_path, page_range=None, output_dir=None):
     return converted_images
 
 
-def split_spreads_to_pages(spread_images, output_dir=None, debug=False, clean_artifacts=True):
+def split_spreads_to_pages(spread_images, output_dir=None, debug=False, clean_artifacts=True, project_name=None):
     """
     Split spread images into individual left and right pages.
     Saves pages to specified output directory with sequential numbering.
@@ -83,19 +83,19 @@ def split_spreads_to_pages(spread_images, output_dir=None, debug=False, clean_ar
         output_dir: Optional output directory. If None, raises ValueError
         debug: If True, enables debug image output for the splitting process
         clean_artifacts: If True, removes small dots and artifacts from the images
+        project_name: The canonical project key/name to use as prefix
     """
     if output_dir is None:
         raise ValueError("output_dir must be specified")
-    
+    if project_name is None:
+        raise ValueError("project_name must be specified")
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     page_images = []
     for spread_idx, spread_path in enumerate(spread_images):
-        # Extract the prefix from the spread filename (everything before _spread_)
-        spread_filename = os.path.basename(spread_path)
-        prefix = spread_filename.split("_spread_")[0]
-        
+        # Use the provided project_name as prefix
+        prefix = project_name
         # Split the spread into left and right pages
         left_page, right_page = split_two_page(spread_path, debug=debug)
         

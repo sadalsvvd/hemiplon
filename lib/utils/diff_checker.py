@@ -339,7 +339,17 @@ def generate_multi_way_diff(texts: List[str], labels: List[str]) -> str:
     
     return '\n'.join(output)
 
-def compare_multiple_folders(folders: List[str], labels: List[str], file_pattern: str = "*", ignore_whitespace: bool = True) -> Dict[str, str]:
+def compare_multiple_folders(
+    folders: List[str], 
+    labels: List[str], 
+    # TODO: This should be used to glob down to the specific file pattern
+    # so that we can put the run.yml in the run folder with metadata
+    # and have it be skipped by this function
+    file_pattern: str = "*",
+    ignore_whitespace: bool = True,
+    start_index: int = 0,
+    end_index: int | None = None
+) -> Dict[str, str]:
     """
     Compare files with matching names across multiple folders and generate multi-way diffs.
     
@@ -348,6 +358,8 @@ def compare_multiple_folders(folders: List[str], labels: List[str], file_pattern
         labels: List of labels for each folder (e.g. ['gpt-4.1', 'gpt-4.1-mini', 'claude'])
         file_pattern: Optional glob pattern to filter files (default: "*")
         ignore_whitespace: If True, ignores whitespace differences (default: True)
+        start_index: Index of first file to process (inclusive)
+        end_index: Index of last file to process (exclusive)
         
     Returns:
         Dictionary mapping filenames to their multi-way diff outputs
@@ -376,12 +388,18 @@ def compare_multiple_folders(folders: List[str], labels: List[str], file_pattern
         logging.warning("No matching files found across all folders")
         return {}
     
-    logging.info(f"Found {len(common_files)} files to compare")
+    # Sort and slice the common files
+    common_files = sorted(common_files)
+    if end_index is None:
+        end_index = len(common_files)
+    common_files = common_files[start_index:end_index]
+    
+    logging.info(f"Processing {len(common_files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
     
     # Store diffs for each file
     diffs: Dict[str, str] = {}
     
-    for filename in sorted(common_files):
+    for filename in common_files:
         try:
             # Read all versions of the file
             file_contents = []

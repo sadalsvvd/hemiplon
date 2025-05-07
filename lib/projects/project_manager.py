@@ -107,8 +107,9 @@ class ProjectManager:
                 dirs.append(str(dir_path) if as_str else dir_path)
         return dirs
 
-    def generate_transcription_diffs(self) -> None:
+    def generate_transcription_diffs(self, start_index: int = 0, end_index: int | None = None) -> None:
         # Compares all transcription runs and writes out diffs. This is the basis for review and consensus.
+        logger.info(self._log_prefix("Transcription Diff", None) + f" Generating transcription diffs for project {self.project.name}")
         for config in self.project.transcription:
             for run in range(config.runs):
                 dir_path = self.project.transcription_run_dir(config.model, run + 1)
@@ -138,7 +139,11 @@ class ProjectManager:
         logger.info(f"[DIFF DEBUG] labels: {labels}")
 
         diffs = compare_multiple_folders(
-            folders=transcription_dirs, labels=labels, file_pattern="*.md"
+            folders=transcription_dirs, 
+            labels=labels, 
+            file_pattern="*.md",
+            start_index=start_index,
+            end_index=end_index
         )
         diffs_dir = self.project.transcription_diffs_dir
         FileManager.ensure_dir(diffs_dir)
@@ -153,7 +158,7 @@ class ProjectManager:
             FileManager.write_text(diff_path, diff_text)
             logger.info(f"Wrote diff to {diff_path}")
 
-    async def review_transcriptions(self) -> None:
+    async def review_transcriptions(self, start_index: int = 0, end_index: int | None = None) -> None:
         # This stage uses LLMs to review the diffs between transcription runs, producing rationale for consensus.
         logger.info(self._log_prefix("Transcription Review", None) + f" Starting transcription review for project {self.project.name}")
         if not self.project.transcription_review:
@@ -170,6 +175,9 @@ class ProjectManager:
         review_prompt = FileManager.read_text(self.project.get_prompt_path("transcription_review"))
 
         input_files = sorted(diffs_dir.glob("*_diff.md"))
+        input_files = self._slice_files(input_files, start_index, end_index)
+        logger.info(f"Processing {len(input_files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
+        
         to_process = log_and_filter_unprocessed(
             input_files=input_files,
             output_dir=reviewed_dir,
@@ -223,7 +231,7 @@ class ProjectManager:
             logger.error(f"Error during review of {diff_file.name} with {config.model}: {str(e)}")
             raise
 
-    async def finalize_transcriptions(self) -> None:
+    async def finalize_transcriptions(self, start_index: int = 0, end_index: int | None = None) -> None:
         # This stage produces the final, unified transcription for each page, using the review rationale and all originals.
         logger.info(self._log_prefix("Transcription Finalization", None) + f" Starting transcription finalization for project {self.project.name}")
         reviewed_dir = self.project.transcription_reviewed_dir
@@ -236,6 +244,9 @@ class ProjectManager:
         FileManager.ensure_dir(final_dir)
 
         input_files = sorted(reviewed_dir.glob("*_transcribed_reviewed.md"))
+        input_files = self._slice_files(input_files, start_index, end_index)
+        logger.info(f"Processing {len(input_files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
+        
         to_process = log_and_filter_unprocessed(
             input_files=input_files,
             output_dir=final_dir,
@@ -309,7 +320,7 @@ class ProjectManager:
         FileManager.write_text(final_path, final_text)
         logger.info(f"Final transcription for {page_id} saved to {final_path}")
 
-    async def run_translation(self) -> None:
+    async def run_translation(self, start_index: int = 0, end_index: int | None = None) -> None:
         # This stage translates the finalized transcriptions using all configured models and runs.
         logger.info(self._log_prefix("Translation", None) + f" Starting translation for project {self.project.name}")
         final_dir = self.project.transcription_final_dir
@@ -318,6 +329,9 @@ class ProjectManager:
             return
 
         final_files = sorted(final_dir.glob("*_final.md"))
+        final_files = self._slice_files(final_files, start_index, end_index)
+        logger.info(f"Processing {len(final_files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
+        
         page_ids = [f.stem.replace("_final", "") for f in final_files]
         page_id_to_file = {pid: f for pid, f in zip(page_ids, final_files)}
 
@@ -408,9 +422,9 @@ class ProjectManager:
                 dirs.append(str(dir_path) if as_str else dir_path)
         return dirs
 
-    def generate_translation_diffs(self) -> None:
+    def generate_translation_diffs(self, start_index: int = 0, end_index: int | None = None) -> None:
         # Compares all translation runs and writes out diffs. This is the basis for translation review and consensus.
-        logger.info(self._log_prefix("Translation", None) + f" Generating translation diffs for project {self.project.name}")
+        logger.info(self._log_prefix("Translation Diff", None) + f" Generating translation diffs for project {self.project.name}")
         for config in self.project.translation:
             for run in range(config.runs):
                 dir_path = self.project.translation_run_dir(config.model, run + 1)
@@ -436,7 +450,11 @@ class ProjectManager:
                     logger.warning(f"{log_prefix} Skipping missing translation run directory: {dir_path}")
 
         diffs = compare_multiple_folders(
-            folders=translation_dirs, labels=labels, file_pattern="*.md"
+            folders=translation_dirs, 
+            labels=labels, 
+            file_pattern="*.md",
+            start_index=start_index,
+            end_index=end_index
         )
         diffs_dir = self.project.translation_diffs_dir
         FileManager.ensure_dir(diffs_dir)
@@ -450,7 +468,7 @@ class ProjectManager:
             FileManager.write_text(diff_path, diff_text)
             logger.info(f"Wrote translation diff to {diff_path}")
 
-    async def review_translations(self) -> None:
+    async def review_translations(self, start_index: int = 0, end_index: int | None = None) -> None:
         # This stage uses LLMs to review the diffs between translation runs, producing rationale for consensus.
         logger.info(self._log_prefix("Translation Review", None) + f" Starting translation review for project {self.project.name}")
         diffs_dir = self.project.translation_diffs_dir
@@ -461,6 +479,9 @@ class ProjectManager:
         reviewed_dir = self.project.translation_reviewed_dir
         FileManager.ensure_dir(reviewed_dir)
         input_files = sorted(diffs_dir.glob("*_diff.md"))
+        input_files = self._slice_files(input_files, start_index, end_index)
+        logger.info(f"Processing {len(input_files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
+        
         to_process = log_and_filter_unprocessed(
             input_files=input_files,
             output_dir=reviewed_dir,
@@ -518,7 +539,7 @@ class ProjectManager:
             logger.error(f"Error during translation review of {diff_file.name} with {config.model}: {str(e)}")
             raise
 
-    async def finalize_translations(self) -> None:
+    async def finalize_translations(self, start_index: int = 0, end_index: int | None = None) -> None:
         # This stage produces the final, unified translation for each page, using the review rationale and all originals.
         logger.info(self._log_prefix("Translation Finalization", None) + f" Starting translation finalization for project {self.project.name}")
         reviewed_dir = self.project.translation_reviewed_dir
@@ -531,6 +552,9 @@ class ProjectManager:
         FileManager.ensure_dir(final_dir)
 
         input_files = sorted(reviewed_dir.glob("*_reviewed.md"))
+        input_files = self._slice_files(input_files, start_index, end_index)
+        logger.info(f"Processing {len(input_files)} files from index {start_index} to {end_index if end_index is not None else 'end'}")
+        
         to_process = log_and_filter_unprocessed(
             input_files=input_files,
             output_dir=final_dir,
@@ -609,6 +633,12 @@ class ProjectManager:
         FileManager.write_text(final_path, final_text)
         logger.info(f"Final translation for {page_id} saved to {final_path}")
 
+    def _slice_files(self, files: List[Path], start_index: int = 0, end_index: int | None = None) -> List[Path]:
+        """Helper method to slice a list of files based on start and end indices."""
+        if end_index is None:
+            end_index = len(files)
+        return files[start_index:end_index]
+
     async def run_pipeline(
         self,
         stages: List[str] | None = None,
@@ -635,19 +665,19 @@ class ProjectManager:
         if "transcription" in stages:
             await self.run_transcription(start_index=start_index, end_index=end_index)
         if "transcription-diff" in stages:
-            self.generate_transcription_diffs()
+            self.generate_transcription_diffs(start_index=start_index, end_index=end_index)
         if "transcription-review" in stages:
-            await self.review_transcriptions()
+            await self.review_transcriptions(start_index=start_index, end_index=end_index)
         if "transcription-finalize" in stages:
-            await self.finalize_transcriptions()
+            await self.finalize_transcriptions(start_index=start_index, end_index=end_index)
         if "translation" in stages:
-            await self.run_translation()
+            await self.run_translation(start_index=start_index, end_index=end_index)
         if "translation-diff" in stages:
-            self.generate_translation_diffs()
+            self.generate_translation_diffs(start_index=start_index, end_index=end_index)
         if "translation-review" in stages:
-            await self.review_translations()
+            await self.review_translations(start_index=start_index, end_index=end_index)
         if "translation-finalize" in stages:
-            await self.finalize_translations()
+            await self.finalize_translations(start_index=start_index, end_index=end_index)
         logger.info(self._log_prefix("Pipeline", None) + f" Pipeline complete for project {self.project.name}")
 
 

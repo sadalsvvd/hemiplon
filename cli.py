@@ -53,12 +53,12 @@ def main():
         "--start",
         type=int,
         default=0,
-        help="For transcription stage, index of first image to process (inclusive)",
+        help="Index of first file to process (inclusive) for any stage that processes files",
     )
     run_parser.add_argument(
         "--end",
         type=int,
-        help="For transcription stage, index of last image to process (exclusive)",
+        help="Index of last file to process (exclusive) for any stage that processes files",
     )
 
     # Generate manifest command
